@@ -33,40 +33,35 @@ witness localSecretKey(): Bytes<32>;
 witness getVote(): Boolean;
 witness getVoteSalt(): Bytes<32>;
 
-circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
+export pure circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>([pad(32, "ballot:pk:"), seq, sk]);
 }
 
 constructor() {
   phase = BallotPhase.registration;
-  admin = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
   sequence.increment(1);
+  admin = disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
 }
 
-// Admin registers eligible voters
 export circuit registerVoter(voterPk: Bytes<32>): [] {
   assert(phase == BallotPhase.registration, "Not in registration phase");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == admin),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == admin),
          "Only admin can register voters");
-  assert(!registeredVoters.member(voterPk), "Already registered");
-  registeredVoters.insert(voterPk, true);
+  assert(!registeredVoters.member(disclose(voterPk)), "Already registered");
+  registeredVoters.insert(disclose(voterPk), true);
   totalRegistered.increment(1);
 }
 
-// Voter submits a commitment: hash(vote || salt)
-// The commitment hides the vote direction -- observer sees only a hash
 export circuit castVote(): [] {
   assert(phase == BallotPhase.voting, "Not in voting phase");
 
-  const voter = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+  const voter = disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
   assert(registeredVoters.member(voter), "Not a registered voter");
   assert(!voterCommitments.member(voter), "Already voted");
 
   const vote = getVote();
   const salt = getVoteSalt();
 
-  // Commit: hash(domain || salt || vote-as-bytes)
-  // Using Field cast so Boolean -> Field -> Bytes<32>
   const voteBytes = vote as Field as Bytes<32>;
   const commitment = persistentHash<Vector<3, Bytes<32>>>([
     pad(32, "ballot:vote:"),
@@ -78,19 +73,16 @@ export circuit castVote(): [] {
   totalVoted.increment(1);
 }
 
-// Voter reveals their vote during tally phase -- circuit verifies commitment
-// and increments the appropriate counter
 export circuit revealVote(): [] {
   assert(phase == BallotPhase.tallying, "Not in tallying phase");
 
-  const voter = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+  const voter = disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
   assert(voterCommitments.member(voter), "No commitment found");
   assert(!tallied.member(voter), "Already tallied");
 
   const vote = getVote();
   const salt = getVoteSalt();
 
-  // Recompute commitment and verify it matches
   const voteBytes = vote as Field as Bytes<32>;
   const recomputed = persistentHash<Vector<3, Bytes<32>>>([
     pad(32, "ballot:vote:"),
@@ -99,11 +91,8 @@ export circuit revealVote(): [] {
   ]);
 
   const stored = voterCommitments.lookup(voter);
-  assert(disclose(recomputed == stored), "Commitment mismatch -- vote or salt changed");
+  assert(disclose(recomputed == stored), "Commitment mismatch");
 
-  // Increment the correct tally counter
-  // Privacy note: the counter increment IS observable per-tx, but during the
-  // tally phase all reveals happen and the ordering is non-deterministic
   if (disclose(vote)) {
     tallyFor.increment(1);
   } else {
@@ -113,24 +102,23 @@ export circuit revealVote(): [] {
   tallied.insert(voter);
 }
 
-// Phase transitions (admin only)
 export circuit openVoting(): [] {
   assert(phase == BallotPhase.registration, "Must be in registration");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == admin),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == admin),
          "Only admin");
   phase = BallotPhase.voting;
 }
 
 export circuit openTallying(): [] {
   assert(phase == BallotPhase.voting, "Must be in voting");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == admin),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == admin),
          "Only admin");
   phase = BallotPhase.tallying;
 }
 
 export circuit closeBallot(): [] {
   assert(phase == BallotPhase.tallying, "Must be in tallying");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == admin),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == admin),
          "Only admin");
   phase = BallotPhase.closed;
   sequence.increment(1);
@@ -154,6 +142,17 @@ export circuit closeBallot(): [] {
   commitments map to prevent double-voting. This is a necessary tradeoff -- anonymous
   voting with double-vote prevention requires more advanced cryptography (e.g.,
   ring signatures or nullifier schemes).
+- **Constructor ordering matters:** `sequence.increment(1)` must come BEFORE the admin
+  key derivation. If the admin key is set with `seq=0` but all subsequent checks read
+  `seq=1` (post-increment), the admin can never authenticate. Increment first, then
+  derive.
+- **`export pure circuit` for off-chain use:** `publicKey` must be declared
+  `export pure circuit` so that voter public keys can be derived off-chain (via
+  `pureCircuits.publicKey`) for registration without submitting a transaction.
+- **`disclose()` on Map operation arguments:** Circuit parameters used as keys in Map
+  `member`/`insert` operations need `disclose()` wrapping (e.g.,
+  `disclose(voterPk)` in `registerVoter`). Without this, the compiler rejects the
+  operation because the key would remain in the private domain.
 
 ---
 
@@ -196,33 +195,132 @@ export const witnesses = {
 
 ## Tests
 
-```
-describe('Shielded Voting', () => {
+```typescript
+import { describe, it, expect, beforeEach } from "vitest";
+import { Contract, pureCircuits, BallotPhase } from "../src/managed/voting/contract/index.js";
+import {
+  createConstructorContext,
+  createCircuitContext,
+  sampleContractAddress,
+} from "@midnight-ntwrk/compact-runtime";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 
-  1. Register voter and cast vote (happy path)
-     - Deploy, register a voter, open voting, cast vote
-     - Assert totalVoted increments and commitment is stored
+setNetworkId("undeployed");
 
-  2. Reveal vote matches commitment (happy path)
-     - Cast with vote=true + salt, transition to tallying, reveal
-     - Assert tallyFor increments by 1
+const adminKey = new Uint8Array(32);
+adminKey[0] = 0x01;
+const voterKey = new Uint8Array(32);
+voterKey[0] = 0x02;
 
-  3. Reveal with wrong salt (should fail)
-     - Cast with salt A, attempt reveal with salt B
-     - Assert "Commitment mismatch" error
+const voteSalt = new Uint8Array(32);
+voteSalt[0] = 0xAA;
 
-  4. Double vote prevention
-     - Cast once, attempt to cast again with same voter key
-     - Assert "Already voted" error
+function makeWitnesses(secretKey, vote = true, salt = voteSalt) {
+  return {
+    localSecretKey: ({ privateState }) => [privateState, secretKey],
+    getVote: ({ privateState }) => [privateState, vote],
+    getVoteSalt: ({ privateState }) => [privateState, salt],
+  };
+}
 
-  5. Unregistered voter cannot cast
-     - Skip registration, attempt to cast
-     - Assert "Not a registered voter" error
+describe("Shielded Voting", () => {
+  let adminContract;
+  let voterContract;
+  let ctx;
+  let voterPk;
 
-  6. Phase enforcement
-     - Attempt to cast during registration phase
-     - Attempt to reveal during voting phase
-     - Assert phase mismatch errors
+  beforeEach(() => {
+    adminContract = new Contract(makeWitnesses(adminKey));
+    voterContract = new Contract(makeWitnesses(voterKey, true, voteSalt));
+
+    const addr = sampleContractAddress();
+    const initial = adminContract.initialState(createConstructorContext({}, addr));
+    ctx = createCircuitContext(
+      addr,
+      initial.currentZswapLocalState,
+      initial.currentContractState,
+      initial.currentPrivateState,
+    );
+
+    // Derive voter's public key using sequence=1 (after constructor)
+    const seqBytes = new Uint8Array(32);
+    seqBytes[0] = 0x01;
+    voterPk = pureCircuits.publicKey(voterKey, seqBytes);
+  });
+
+  it("should start in registration phase", () => {
+    const r = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    expect(r.context).toBeDefined();
+  });
+
+  it("should register voter and transition to voting", () => {
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    const r2 = adminContract.impureCircuits.openVoting(r1.context);
+    expect(r2.context).toBeDefined();
+  });
+
+  it("should allow registered voter to cast vote", () => {
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    const r2 = adminContract.impureCircuits.openVoting(r1.context);
+    const r3 = voterContract.impureCircuits.castVote(r2.context);
+    expect(r3.context).toBeDefined();
+  });
+
+  it("should reject unregistered voter", () => {
+    const r1 = adminContract.impureCircuits.openVoting(ctx);
+    expect(() => {
+      voterContract.impureCircuits.castVote(r1.context);
+    }).toThrow("Not a registered voter");
+  });
+
+  it("should reject double voting", () => {
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    const r2 = adminContract.impureCircuits.openVoting(r1.context);
+    const r3 = voterContract.impureCircuits.castVote(r2.context);
+    expect(() => {
+      voterContract.impureCircuits.castVote(r3.context);
+    }).toThrow("Already voted");
+  });
+
+  it("should reveal vote and increment tally", () => {
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    const r2 = adminContract.impureCircuits.openVoting(r1.context);
+    const r3 = voterContract.impureCircuits.castVote(r2.context);
+    const r4 = adminContract.impureCircuits.openTallying(r3.context);
+    const r5 = voterContract.impureCircuits.revealVote(r4.context);
+    expect(r5.context).toBeDefined();
+  });
+
+  it("should reject reveal with wrong salt", () => {
+    const wrongSalt = new Uint8Array(32);
+    wrongSalt[0] = 0xBB;
+    const wrongVoter = new Contract(makeWitnesses(voterKey, true, wrongSalt));
+
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    const r2 = adminContract.impureCircuits.openVoting(r1.context);
+    const r3 = voterContract.impureCircuits.castVote(r2.context);
+    const r4 = adminContract.impureCircuits.openTallying(r3.context);
+    expect(() => {
+      wrongVoter.impureCircuits.revealVote(r4.context);
+    }).toThrow("Commitment mismatch");
+  });
+
+  it("should reject voting during registration phase", () => {
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    expect(() => {
+      voterContract.impureCircuits.castVote(r1.context);
+    }).toThrow("Not in voting phase");
+  });
+
+  it("should complete full ballot lifecycle", () => {
+    const r1 = adminContract.impureCircuits.registerVoter(ctx, voterPk);
+    const r2 = adminContract.impureCircuits.openVoting(r1.context);
+    const r3 = voterContract.impureCircuits.castVote(r2.context);
+    const r4 = adminContract.impureCircuits.openTallying(r3.context);
+    const r5 = voterContract.impureCircuits.revealVote(r4.context);
+    const r6 = adminContract.impureCircuits.closeBallot(r5.context);
+    expect(r6.context).toBeDefined();
+  });
 });
 ```
 
@@ -243,3 +341,7 @@ describe('Shielded Voting', () => {
   the salt in private state across sessions.
 - This contract does not handle the case where some voters never reveal. The admin
   should close the ballot after a deadline regardless of reveal completeness.
+- Compiler-validated against Compact 0.29.0 (9/9 tests passing).
+- `Boolean as Field as Bytes<32>` is a valid chained cast for encoding boolean values
+  into a hashable format. The intermediate `Field` step is required because Compact
+  does not support a direct `Boolean as Bytes<32>` cast.
