@@ -1,0 +1,368 @@
+# Bulletin Board
+
+A single-post bulletin board demonstrating the canonical authentication pattern -- witnesses for private key management, domain-separated key hashing, and ownership verification. Based on the official [midnightntwrk/example-bboard](https://github.com/midnightntwrk/example-bboard), this is the pattern that almost every Midnight contract builds on.
+
+---
+
+## Contract
+
+```compact
+pragma language_version >= 0.20;
+
+import CompactStandardLibrary;
+
+export enum State { vacant, occupied }
+
+export ledger state: State;
+export ledger message: Opaque<"string">;
+export ledger owner: Bytes<32>;
+ledger sequence: Counter;
+
+witness localSecretKey(): Bytes<32>;
+
+constructor() {
+  state = State.vacant;
+  message = none<Opaque<"string">>();
+  sequence.increment(1);
+}
+
+export circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "bboard:pk:"), seq, sk]);
+}
+
+export circuit post(newMessage: Opaque<"string">): [] {
+  assert(state == State.vacant, "Board is occupied");
+  owner = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+  message = newMessage;
+  state = State.occupied;
+}
+
+export circuit takeDown(): Opaque<"string"> {
+  assert(state == State.occupied, "Board is vacant");
+  assert(owner == publicKey(localSecretKey(), sequence as Field as Bytes<32>),
+         "Not the current owner");
+  const oldMessage = message;
+  message = none<Opaque<"string">>();
+  state = State.vacant;
+  sequence.increment(1);
+  return oldMessage;
+}
+```
+
+---
+
+## Key Concepts
+
+### Authentication Pattern
+
+This is the pattern to memorise. Every authenticated Midnight contract uses a variation of it.
+
+**Step 1 -- Secret key in private state.** The user holds a secret key off-chain, managed by their TypeScript witness layer. The key never appears on-chain.
+
+**Step 2 -- Witness provides the key.** `witness localSecretKey(): Bytes<32>` declares the bridge. The Compact circuit calls `localSecretKey()` and receives the key from the off-chain TypeScript implementation.
+
+**Step 3 -- Hash-based public key derivation.** `publicKey()` takes the secret key and produces a deterministic hash:
+
+```compact
+persistentHash<Vector<3, Bytes<32>>>([pad(32, "bboard:pk:"), seq, sk])
+```
+
+Three inputs are hashed together: a domain separator, a sequence value, and the secret key. The output is a 32-byte public key.
+
+**Step 4 -- Disclosure.** When posting, the derived public key is written to the public ledger via `disclose()`:
+
+```compact
+owner = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+```
+
+The hash becomes public. The secret key stays private. The ZK proof guarantees the hash was correctly derived from the secret key without revealing it.
+
+**Step 5 -- Verification.** When taking down a post, the circuit recomputes the public key from the caller's secret key and compares it to the stored owner:
+
+```compact
+assert(owner == publicKey(localSecretKey(), sequence as Field as Bytes<32>),
+       "Not the current owner");
+```
+
+If the hashes match, the caller knows the secret key that produced the stored public key. This is proof of identity -- the Midnight equivalent of signature verification.
+
+### Why Domain Separator (`"bboard:pk:"`)
+
+The string `"bboard:pk:"` is a domain separator. It is hashed alongside the secret key to produce the public key.
+
+Without it, the same secret key used across different contracts would produce the same public key. An observer could link the user's activity across contracts: "the owner of bulletin board X is the same entity as the admin of contract Y."
+
+With domain separation, each contract type produces a different public key from the same secret key. Identity is isolated per contract.
+
+### Why Sequence Counter
+
+The `sequence` counter increments each time a post is taken down. It is included in the public key derivation.
+
+This prevents replay attacks. After a post cycle (post then take-down), the sequence value changes, so the public key changes. A previous `owner` value cannot be reused because it was derived from an older sequence number.
+
+Each post cycle gets a unique key derivation, even with the same secret key.
+
+### Privacy Model
+
+| Value | Visibility | Stored where |
+|-------|-----------|--------------|
+| Secret key | **PRIVATE** | Off-chain, in user's private state. Never leaves the witness. |
+| Public key hash | **PUBLIC** | On ledger as `owner`. Verifiable by anyone. |
+| Message content | **PUBLIC** | On ledger as `message`. Visible to all. |
+| Sequence counter | **CONTRACT-PRIVATE** | On ledger but not exported. Only circuits can read it. |
+
+The ZK proof proves: "I know a secret key that, when hashed with the domain separator and current sequence, produces the `owner` value stored on the ledger." The verifier is convinced without learning the secret key.
+
+---
+
+## TypeScript Witnesses
+
+```typescript
+import { WitnessContext } from '@midnight-ntwrk/compact-runtime';
+
+// The Ledger type is generated by the Compact compiler
+// from your contract's ledger declarations.
+import type { Ledger } from '../managed/bboard/contract/index.js';
+
+export interface BBoardPrivateState {
+  readonly secretKey: Uint8Array;
+}
+
+export const witnesses = {
+  localSecretKey: ({
+    privateState,
+  }: WitnessContext<Ledger, BBoardPrivateState>): [
+    BBoardPrivateState,
+    Uint8Array,
+  ] => [privateState, privateState.secretKey],
+};
+```
+
+The witness is minimal: it reads `secretKey` from private state and returns it unchanged. The tuple `[privateState, privateState.secretKey]` follows the standard witness return pattern -- first element is the (potentially updated) private state, second is the return value.
+
+The `WitnessContext` also provides read-only access to the current public ledger state, but this witness does not need it.
+
+---
+
+## Tests
+
+Simulator tests using the Compact runtime. These execute circuits directly without ZK proof generation.
+
+```typescript
+import { describe, it, expect } from 'vitest';
+import { Contract } from '../managed/bboard/contract/index.js';
+import {
+  createConstructorContext,
+  createCircuitContext,
+} from '@midnight-ntwrk/compact-runtime';
+import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+
+setNetworkId('undeployed');
+
+interface BBoardPrivateState {
+  readonly secretKey: Uint8Array;
+}
+
+const witnesses = {
+  localSecretKey: ({
+    privateState,
+  }: {
+    privateState: BBoardPrivateState;
+  }): [BBoardPrivateState, Uint8Array] => [
+    privateState,
+    privateState.secretKey,
+  ],
+};
+
+// Helper: initialize contract and return state
+function deployContract(deployer: BBoardPrivateState) {
+  const contract = new Contract<BBoardPrivateState>(witnesses);
+  const { currentPrivateState, currentContractState } =
+    contract.initialState(
+      createConstructorContext(deployer, '0'.repeat(64)),
+    );
+  return { contract, currentContractState, currentPrivateState };
+}
+
+// Helper: execute a circuit and return updated state
+function executeCircuit(
+  contract: Contract<BBoardPrivateState>,
+  contractState: any,
+  privateState: BBoardPrivateState,
+  circuitName: string,
+  ...args: any[]
+) {
+  const ctx = createCircuitContext(contractState, privateState);
+  return (contract.impureCircuits as any)[circuitName](ctx, ...args);
+}
+
+describe('Bulletin Board', () => {
+  const userAKey = new Uint8Array(32).fill(0x01);
+  const userAState: BBoardPrivateState = { secretKey: userAKey };
+
+  const userBKey = new Uint8Array(32).fill(0x02);
+  const userBState: BBoardPrivateState = { secretKey: userBKey };
+
+  // 1. Post a message (happy path)
+  it('should post a message to a vacant board', () => {
+    const { contract, currentContractState, currentPrivateState } =
+      deployContract(userAState);
+
+    const result = executeCircuit(
+      contract,
+      currentContractState,
+      currentPrivateState,
+      'post',
+      'Hello, Midnight!',
+    );
+
+    expect(result.currentContractState).toBeDefined();
+    // Board is now occupied with user A as owner
+  });
+
+  // 2. Take down own message (happy path)
+  it('should allow the poster to take down their own message', () => {
+    const { contract, currentContractState, currentPrivateState } =
+      deployContract(userAState);
+
+    // Post
+    const postResult = executeCircuit(
+      contract,
+      currentContractState,
+      currentPrivateState,
+      'post',
+      'Hello, Midnight!',
+    );
+
+    // Take down (same user)
+    const takeDownResult = executeCircuit(
+      contract,
+      postResult.currentContractState,
+      postResult.currentPrivateState,
+      'takeDown',
+    );
+
+    expect(takeDownResult.currentContractState).toBeDefined();
+    // Board is vacant again
+  });
+
+  // 3. Cannot post when occupied (assertion failure)
+  it('should reject posting to an occupied board', () => {
+    const { contract, currentContractState, currentPrivateState } =
+      deployContract(userAState);
+
+    // First post succeeds
+    const postResult = executeCircuit(
+      contract,
+      currentContractState,
+      currentPrivateState,
+      'post',
+      'First message',
+    );
+
+    // Second post should fail: "Board is occupied"
+    expect(() => {
+      executeCircuit(
+        contract,
+        postResult.currentContractState,
+        postResult.currentPrivateState,
+        'post',
+        'Second message',
+      );
+    }).toThrow();
+  });
+
+  // 4. Cannot take down someone else's message (authentication failure)
+  it('should reject take-down by a different user', () => {
+    const { contract, currentContractState, currentPrivateState } =
+      deployContract(userAState);
+
+    // User A posts
+    const postResult = executeCircuit(
+      contract,
+      currentContractState,
+      currentPrivateState,
+      'post',
+      'User A message',
+    );
+
+    // User B tries to take down -- should fail: "Not the current owner"
+    expect(() => {
+      executeCircuit(
+        contract,
+        postResult.currentContractState,
+        userBState, // different private state = different secret key
+        'takeDown',
+      );
+    }).toThrow();
+  });
+
+  // 5. Two-user scenario: user A posts, user B cannot take down, user A can
+  it('should enforce ownership across users', () => {
+    const { contract, currentContractState, currentPrivateState } =
+      deployContract(userAState);
+
+    // User A posts
+    const postResult = executeCircuit(
+      contract,
+      currentContractState,
+      currentPrivateState,
+      'post',
+      'Only A can remove this',
+    );
+
+    // User B fails to take down
+    expect(() => {
+      executeCircuit(
+        contract,
+        postResult.currentContractState,
+        userBState,
+        'takeDown',
+      );
+    }).toThrow();
+
+    // User A succeeds at take down
+    const takeDownResult = executeCircuit(
+      contract,
+      postResult.currentContractState,
+      postResult.currentPrivateState,
+      'takeDown',
+    );
+
+    expect(takeDownResult.currentContractState).toBeDefined();
+
+    // Board is vacant -- now user B can post
+    const userBPostResult = executeCircuit(
+      contract,
+      takeDownResult.currentContractState,
+      userBState,
+      'post',
+      'User B takes over',
+    );
+
+    expect(userBPostResult.currentContractState).toBeDefined();
+  });
+});
+```
+
+**Key testing patterns demonstrated:**
+
+- **Shared contract state, separate private state.** Both users operate on the same `currentContractState` (the shared ledger), but each provides their own `BBoardPrivateState` containing their unique secret key.
+- **State threading.** Each circuit call returns updated state that feeds into the next call.
+- **Assertion testing.** `expect(() => ...).toThrow()` catches Compact `assert()` failures.
+
+---
+
+## Notes
+
+- **This is THE canonical authentication pattern for Midnight.** Nearly every contract that needs user identity builds on the witness + hash-based key derivation + disclose pattern shown here.
+
+- **`persistentHash` uses SHA-256**, not Poseidon. Use `persistentHash` when the hash must be verifiable off-chain or stored persistently. Use `transientHash` (Poseidon, ~10x cheaper in-circuit) for internal comparisons that never leave the proof.
+
+- **`sequence as Field as Bytes<32>`** is a chained type cast. `Counter` cannot cast directly to `Bytes<32>`, so it goes through `Field` as an intermediate step. This is a common Compact pattern for converting between incompatible types.
+
+- **`none<Opaque<"string">>()`** constructs an empty `Maybe` value. `Opaque<"string">` is the TypeScript-bridged string type. `message` is effectively a `Maybe<Opaque<"string">>` -- it holds either a string value or nothing.
+
+- **The pattern is analogous to Ethereum's ECDSA signature verification**, but implemented with hash-based authentication and ZK proofs. In Ethereum, you sign a message with your private key and the contract verifies the signature against a stored address. In Midnight, you provide your secret key via a witness, the circuit hashes it to derive a public key, and compares the hash against a stored owner. The ZK proof guarantees the hash computation was honest without revealing the secret key.
+
+- **`publicKey()` is exported as a circuit**, meaning it can also be called from TypeScript for off-chain key derivation (e.g., to display the user's public key in a UI). As an exported circuit, calling it on-chain generates a ZK proof. For internal reuse within other circuits, consider an internal `circuit` variant to avoid the `k`-value explosion described in the language reference.
