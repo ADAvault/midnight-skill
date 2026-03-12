@@ -139,79 +139,92 @@ The returned object gives you the full state after constructor execution:
 
 ### Executing Circuits
 
-After initialization, execute circuits using `createCircuitContext`:
+IMPORTANT: `createCircuitContext` requires **4 parameters**:
+`(contractAddress, zswapLocalState, contractState, privateState)`.
+
+`sampleContractAddress` is a **function** — call it with `()`.
 
 ```typescript
+import { sampleContractAddress } from "@midnight-ntwrk/compact-runtime";
+
 it("should increment the counter", () => {
-  const contract = new Contract<PrivateState>(witnesses);
+  const contract = new Contract(witnesses);
 
   // 1. Initialize
+  const addr = sampleContractAddress();  // NOTE: function call!
   const init = contract.initialState(
-    createConstructorContext(initialPrivateState, "0".repeat(64)),
+    createConstructorContext(initialPrivateState, addr),
   );
 
-  // 2. Create circuit context from current state
-  const context = createCircuitContext(
+  // 2. Create circuit context — requires all 4 params
+  const ctx = createCircuitContext(
+    addr,
+    init.currentZswapLocalState,
     init.currentContractState,
     init.currentPrivateState,
   );
 
   // 3. Execute the circuit
-  const result = contract.impureCircuits.increment(context);
+  const result = contract.impureCircuits.increment(ctx);
 
-  // 4. State is updated in the result
-  expect(result.currentPrivateState).toBeDefined();
-  expect(result.currentContractState).toBeDefined();
+  // 4. Result contains: result, context, proofData, gasCost
+  expect(result.context).toBeDefined();
 });
 ```
 
 ### Chaining Multiple Circuit Calls
 
-Each circuit execution returns updated state. Feed it into the next call:
+CRITICAL PATTERN: Each circuit execution returns a `result.context` that passes
+directly to the next call. Do NOT rebuild the context — pass it as-is:
 
 ```typescript
 it("should increment three times", () => {
-  const contract = new Contract<PrivateState>(witnesses);
+  const contract = new Contract(witnesses);
+  const addr = sampleContractAddress();
+  const init = contract.initialState(createConstructorContext({}, addr));
 
-  let { currentContractState, currentPrivateState } = contract.initialState(
-    createConstructorContext(initialPrivateState, "0".repeat(64)),
+  let ctx = createCircuitContext(
+    addr, init.currentZswapLocalState,
+    init.currentContractState, init.currentPrivateState,
   );
 
-  // Increment three times, threading state through
-  for (let i = 0; i < 3; i++) {
-    const ctx = createCircuitContext(currentContractState, currentPrivateState);
-    const result = contract.impureCircuits.increment(ctx);
-    currentContractState = result.currentContractState;
-    currentPrivateState = result.currentPrivateState;
-  }
+  // Chain calls: pass result.context directly as the continuation
+  const r1 = contract.impureCircuits.increment(ctx);
+  const r2 = contract.impureCircuits.increment(r1.context);
+  const r3 = contract.impureCircuits.increment(r2.context);
 
-  // Check final ledger state
-  // Access depends on your contract's exported ledger shape
+  // Read the result
+  const r4 = contract.impureCircuits.read(r3.context);
+  expect(r4.result).toBe(3n);
 });
 ```
 
 ### Checking Ledger State
 
-The contract state object contains ledger values. Access them through the
-compiled contract's typed interface:
+Use the generated `ledger()` helper function or a `read` circuit to inspect
+ledger values after circuit execution:
 
 ```typescript
-it("should reflect counter value in ledger", () => {
-  const contract = new Contract<PrivateState>(witnesses);
+import { Contract, ledger } from "../src/managed/counter/contract/index.js";
 
-  let { currentContractState, currentPrivateState } = contract.initialState(
-    createConstructorContext(initialPrivateState, "0".repeat(64)),
+it("should reflect counter value in ledger", () => {
+  const contract = new Contract(witnesses);
+  const addr = sampleContractAddress();
+  const init = contract.initialState(createConstructorContext({}, addr));
+  const ctx = createCircuitContext(
+    addr, init.currentZswapLocalState,
+    init.currentContractState, init.currentPrivateState,
   );
 
-  const ctx = createCircuitContext(currentContractState, currentPrivateState);
-  const result = contract.impureCircuits.increment(ctx);
+  const r1 = contract.impureCircuits.increment(ctx);
 
-  // Ledger state is accessible on the contract state object.
-  // The exact access pattern depends on your compiled contract's type exports.
-  // For a counter contract with `export ledger counter: Counter`:
-  const ledger = result.currentContractState;
-  // Check the counter value (Counter type exposes a numeric value)
-  expect(ledger).toBeDefined();
+  // Option 1: Use a read circuit (recommended for simulator)
+  const r2 = contract.impureCircuits.read(r1.context);
+  expect(r2.result).toBe(1n);
+
+  // Option 2: Use the ledger() helper (needs ContractState, not QueryContext)
+  // NOTE: ledger() expects the original ContractState type, not the
+  // QueryContext from result.context — use read circuits in simulator tests
 });
 ```
 
@@ -222,23 +235,36 @@ with Vitest's `expect().toThrow()`:
 
 ```typescript
 it("should reject unauthorized caller", () => {
-  const contract = new Contract<PrivateState>(witnesses);
+  const contract = new Contract(witnesses);
+  const addr = sampleContractAddress();
 
   // Initialize as owner
-  let { currentContractState, currentPrivateState } = contract.initialState(
-    createConstructorContext(ownerPrivateState, "0".repeat(64)),
+  const init = contract.initialState(
+    createConstructorContext(ownerPrivateState, addr),
   );
 
-  // Now try to call a restricted circuit as a different user
-  const attackerPrivateState = {
-    secretKey: new Uint8Array(32).fill(0xff), // different key
-  };
+  const ctx = createCircuitContext(
+    addr, init.currentZswapLocalState,
+    init.currentContractState, init.currentPrivateState,
+  );
 
-  const ctx = createCircuitContext(currentContractState, attackerPrivateState);
+  // Post as owner (succeeds)
+  const r1 = contract.impureCircuits.post(ctx, "hello");
+
+  // Now try restricted action with different private state (attacker)
+  const attackerInit = contract.initialState(
+    createConstructorContext({ secretKey: new Uint8Array(32).fill(0xff) }, addr),
+  );
+  const attackerCtx = createCircuitContext(
+    addr, attackerInit.currentZswapLocalState,
+    // Use the contract state from r1 (has owner set) but attacker's private state
+    r1.context.currentQueryContext,
+    attackerInit.currentPrivateState,
+  );
 
   // The circuit should throw because the assert fails
   expect(() => {
-    contract.impureCircuits.restrictedAction(ctx);
+    contract.impureCircuits.restrictedAction(attackerCtx);
   }).toThrow();
 });
 ```

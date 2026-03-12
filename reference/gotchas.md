@@ -572,6 +572,74 @@ export circuit transfer(to: Bytes<32>, amount: Uint<64>): [] {
 
 ---
 
+## SDK / Runtime Gotchas (Compiler-Validated)
+
+The following gotchas were discovered by compiling and testing skill examples against
+Compact compiler 0.29.0 and `@midnight-ntwrk/compact-runtime`.
+
+### 36. `createCircuitContext` takes 4 parameters, not 2
+
+The signature is `createCircuitContext(contractAddress, zswapLocalState, contractState, privateState)`.
+Passing only `(contractState, privateState)` throws `'contractState' parameter undefined has unexpected type`.
+
+```typescript
+// BAD — only 2 params
+const ctx = createCircuitContext(contractState, privateState);
+
+// GOOD — all 4 params
+const addr = sampleContractAddress();
+const ctx = createCircuitContext(
+  addr,
+  initial.currentZswapLocalState,
+  initial.currentContractState,
+  initial.currentPrivateState
+);
+```
+
+### 37. `sampleContractAddress` is a function
+
+It must be called with `()`. Passing it as a value gives a function object, not an address.
+
+```typescript
+// BAD — passes a function object
+createConstructorContext({}, sampleContractAddress);
+
+// GOOD — calls the function
+createConstructorContext({}, sampleContractAddress());
+```
+
+### 38. Circuit results use context continuation, not state destructuring
+
+After executing a circuit, `result.context` is the full continuation to pass to the
+next call. Do NOT try to destructure and rebuild — pass it directly.
+
+```typescript
+// BAD — contractState from result.context.currentQueryContext is QueryContext, not ContractState
+const ctx2 = createCircuitContext(addr, result.context.currentZswapLocalState,
+  result.context.currentQueryContext, result.context.currentPrivateState);
+
+// GOOD — pass result.context directly as the next circuit's context
+const r2 = contract.impureCircuits.read(result.context);
+```
+
+### 39. `ledger()` helper expects ContractState, not QueryContext
+
+The generated `ledger()` function needs the original `ContractState` (from `initialState()`),
+not the `QueryContext` (from `result.context.currentQueryContext`). Use `read` circuits
+for checking ledger values in simulator tests.
+
+### 40. BLS parameter download may fail behind corporate proxies
+
+The Compact compiler downloads ZK parameters from AWS S3 on first compile. Corporate
+proxies or firewalls may block these downloads. If `compact compile` fails with
+"Failed to fetch data from ...s3.eu-west-1.amazonaws.com... after 3 attempts":
+
+- Ensure the proxy allows `*.amazonaws.com` on port 443
+- Or bypass the proxy for the compile step: `unset http_proxy https_proxy && compact compile ...`
+- Or use the [Brick Towers pre-baked proof server](https://github.com/bricktowers/midnight-proof-server) which includes parameters
+
+---
+
 ## Version Compatibility
 
 > **WARNING:** Midnight is pre-mainnet software. APIs, syntax, and tooling
