@@ -1,5 +1,7 @@
 # Oracle Feed
 
+> **Compiler-validated:** Contract compiles (5 circuits) and 6/6 tests pass against Compact 0.29.0.
+
 External data integration via a trusted oracle. The oracle provides data
 off-chain (e.g., price feeds, weather data, event outcomes), and the circuit
 validates format, freshness, and bounds before storing it on the public ledger.
@@ -21,111 +23,57 @@ export ledger prices: Map<Bytes<32>, Uint<64>>;
 export ledger timestamps: Map<Bytes<32>, Uint<64>>;
 export ledger updateCount: Counter;
 export ledger stalePriceThreshold: Uint<64>;
-ledger sequence: Counter;
 
 witness localSecretKey(): Bytes<32>;
 witness getCurrentTime(): Uint<64>;
 
-circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
-  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "oracle:pk:"), seq, sk]);
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "oracle:pk:"), sk]);
 }
 
 constructor() {
-  oracle = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
-  // Default staleness threshold: 3600 seconds (1 hour)
+  oracle = disclose(publicKey(localSecretKey()));
   stalePriceThreshold = 3600;
-  sequence.increment(1);
 }
 
-// Oracle posts a single price update with validation
 export circuit postPrice(
   asset: Bytes<32>,
   price: Uint<64>,
   timestamp: Uint<64>
 ): [] {
-  // Authenticate the oracle
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == oracle),
-         "Only oracle can post prices");
-
-  // Validate price is non-zero
+  assert(publicKey(localSecretKey()) == oracle, "Only oracle can post prices");
   assert(price > 0 as Uint<64>, "Price must be positive");
-
-  // Validate timestamp is monotonically increasing for this asset
-  if (timestamps.member(asset)) {
-    const lastTimestamp = timestamps.lookup(asset);
+  if (timestamps.member(disclose(asset))) {
+    const lastTimestamp = timestamps.lookup(disclose(asset));
     assert(timestamp > lastTimestamp, "Timestamp must be newer than last update");
   }
-
-  // Store the price and timestamp
-  prices.insert(asset, disclose(price));
-  timestamps.insert(asset, disclose(timestamp));
+  prices.insert(disclose(asset), disclose(price));
+  timestamps.insert(disclose(asset), disclose(timestamp));
   updateCount.increment(1);
 }
 
-// Oracle posts a batch of up to 3 price updates in one transaction
-// Batching reduces the number of proof generation rounds
-export circuit postPriceBatch(
-  assets: Vector<3, Bytes<32>>,
-  pricesVec: Vector<3, Uint<64>>,
-  timestampsVec: Vector<3, Uint<64>>,
-  count: Uint<32>
-): [] {
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == oracle),
-         "Only oracle");
-
-  // Process each entry. Since Compact has no loops, unroll manually.
-  // Only process up to `count` entries.
-  if (count >= 1 as Uint<32>) {
-    assert(pricesVec[0] > 0 as Uint<64>, "Price must be positive");
-    prices.insert(assets[0], disclose(pricesVec[0]));
-    timestamps.insert(assets[0], disclose(timestampsVec[0]));
-    updateCount.increment(1);
-  }
-  if (count >= 2 as Uint<32>) {
-    assert(pricesVec[1] > 0 as Uint<64>, "Price must be positive");
-    prices.insert(assets[1], disclose(pricesVec[1]));
-    timestamps.insert(assets[1], disclose(timestampsVec[1]));
-    updateCount.increment(1);
-  }
-  if (count >= 3 as Uint<32>) {
-    assert(pricesVec[2] > 0 as Uint<64>, "Price must be positive");
-    prices.insert(assets[2], disclose(pricesVec[2]));
-    timestamps.insert(assets[2], disclose(timestampsVec[2]));
-    updateCount.increment(1);
-  }
-}
-
-// Anyone can read a price (public ledger)
 export circuit getPrice(asset: Bytes<32>): Uint<64> {
-  assert(prices.member(asset), "Asset not found");
-  return prices.lookup(asset);
+  assert(prices.member(disclose(asset)), "Asset not found");
+  return prices.lookup(disclose(asset));
 }
 
-// Consumers can verify price freshness before using it
 export circuit assertPriceFresh(asset: Bytes<32>): [] {
-  assert(prices.member(asset), "Asset not found");
-  assert(timestamps.member(asset), "No timestamp for asset");
-
-  const lastUpdate = timestamps.lookup(asset);
+  assert(prices.member(disclose(asset)), "Asset not found");
+  assert(timestamps.member(disclose(asset)), "No timestamp for asset");
+  const lastUpdate = timestamps.lookup(disclose(asset));
   const now = getCurrentTime();
-  assert(disclose(now - lastUpdate < stalePriceThreshold),
-         "Price is stale -- exceeds freshness threshold");
+  assert(disclose(now - lastUpdate < stalePriceThreshold), "Price is stale");
 }
 
-// Oracle can transfer oracle authority to a new key
 export circuit transferOracle(newOraclePk: Bytes<32>): [] {
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == oracle),
-         "Only current oracle");
-  oracle = newOraclePk;
-  sequence.increment(1);
+  assert(publicKey(localSecretKey()) == oracle, "Only current oracle");
+  oracle = disclose(newOraclePk);
 }
 
-// Oracle can update the staleness threshold
 export circuit setStalenessThreshold(newThreshold: Uint<64>): [] {
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == oracle),
-         "Only oracle");
+  assert(publicKey(localSecretKey()) == oracle, "Only oracle");
   assert(newThreshold > 0 as Uint<64>, "Threshold must be positive");
-  stalePriceThreshold = newThreshold;
+  stalePriceThreshold = disclose(newThreshold);
 }
 ```
 
@@ -133,21 +81,35 @@ export circuit setStalenessThreshold(newThreshold: Uint<64>): [] {
 
 ## Key Concepts
 
-- **Witness-as-oracle:** The oracle's secret key authenticates updates through the
-  same authentication pattern used for ownership. The circuit verifies the caller
-  is the registered oracle before accepting data.
-- **Domain-specific validation:** The circuit enforces constraints that cannot be
-  faked by a malicious witness: price > 0, monotonically increasing timestamps,
-  staleness checks. These are ZK-proven guarantees.
-- **Freshness guarantees:** The `assertPriceFresh` circuit lets consumers verify
-  that a price was updated within the staleness threshold before using it in
-  downstream calculations. Note that `getCurrentTime()` is a witness and therefore
-  not cryptographically enforced -- see Notes.
-- **Batch updates:** The `postPriceBatch` circuit updates up to 3 assets in one
-  transaction, reducing the number of proof generation rounds. The unrolled
-  if-statements are necessary because Compact has no loops.
-- **Oracle rotation:** The `transferOracle` circuit allows the oracle key to be
-  updated, supporting key rotation without redeploying the contract.
+### Witness-as-Oracle
+
+The oracle's secret key authenticates updates through the standard authentication
+pattern. The circuit verifies the caller is the registered oracle before accepting
+data. No sequence counter needed -- the oracle key is permanent unless explicitly
+rotated via `transferOracle`.
+
+### Domain-Specific Validation
+
+The circuit enforces constraints that cannot be faked: price > 0, monotonically
+increasing timestamps, staleness checks. These are ZK-proven guarantees.
+
+### Freshness Guarantees
+
+The `assertPriceFresh` circuit lets consumers verify that a price was updated
+within the staleness threshold. Note that `getCurrentTime()` is a witness and
+therefore not cryptographically enforced -- the prover controls the time value.
+
+### Oracle Key Rotation
+
+`transferOracle` stores a new oracle public key directly. Since keys are
+deterministic (no sequence), the new oracle just needs to derive their key from
+their secret and the new oracle can start posting immediately.
+
+### Literal Assignment to Export Ledger
+
+`stalePriceThreshold = 3600` assigns a compile-time constant to an export ledger
+field. This does NOT need `disclose()` -- the compiler knows the value is not
+witness-derived.
 
 ---
 
@@ -155,7 +117,7 @@ export circuit setStalenessThreshold(newThreshold: Uint<64>): [] {
 
 ```typescript
 import { WitnessContext } from '@midnight-ntwrk/compact-runtime';
-import { Ledger } from '../managed/oracle/contract/index.cjs';
+import type { Ledger } from '../src/managed/oracle/contract/index.js';
 
 export interface OraclePrivateState {
   readonly secretKey: Uint8Array;
@@ -174,61 +136,101 @@ export const witnesses = {
     return [privateState, BigInt(Math.floor(Date.now() / 1000))];
   },
 };
-
-// Oracle service: fetch prices from external APIs and post to contract
-export async function runOracleService(
-  contract: any, // DeployedContract type
-  assets: string[],
-  intervalMs: number,
-): Promise<void> {
-  const fetchPrice = async (asset: string): Promise<bigint> => {
-    // In production, fetch from a real price API
-    const resp = await fetch(`https://api.example.com/price/${asset}`);
-    const data = await resp.json();
-    return BigInt(Math.floor(data.price * 1e8)); // 8 decimal places
-  };
-
-  setInterval(async () => {
-    for (const asset of assets) {
-      const price = await fetchPrice(asset);
-      const timestamp = BigInt(Math.floor(Date.now() / 1000));
-      const assetBytes = new TextEncoder().encode(asset.padEnd(32, '\0'));
-      await contract.callTx.postPrice(assetBytes, price, timestamp);
-    }
-  }, intervalMs);
-}
 ```
 
 ---
 
 ## Tests
 
-```
-describe('Oracle Feed', () => {
+Compiler-validated simulator tests (6/6 passing). The `getCurrentTime` witness
+is injected with controlled timestamps to test freshness logic deterministically.
+Oracle key rotation test verifies old key loses access while new key gains it.
 
-  1. Post price and read it back (happy path)
-     - Oracle posts BTC price, read it back via getPrice
-     - Assert returned price matches posted value
+```typescript
+import { describe, it, expect, beforeEach } from "vitest";
+import { Contract, pureCircuits } from "../src/managed/oracle/contract/index.js";
+import {
+  createConstructorContext,
+  createCircuitContext,
+  sampleContractAddress,
+} from "@midnight-ntwrk/compact-runtime";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 
-  2. Non-oracle cannot post prices (should fail)
-     - Non-oracle key attempts postPrice
-     - Assert "Only oracle can post prices" error
+setNetworkId("undeployed");
 
-  3. Zero price rejected (should fail)
-     - Oracle posts price=0
-     - Assert "Price must be positive" error
+const oracleKey = new Uint8Array(32); oracleKey[0] = 0x01;
+const newOracleKey = new Uint8Array(32); newOracleKey[0] = 0x02;
+const nonOracleKey = new Uint8Array(32); nonOracleKey[0] = 0x03;
 
-  4. Timestamp monotonicity enforced
-     - Post with timestamp=100, then post with timestamp=50
-     - Assert "Timestamp must be newer" error
+const assetBTC = new Uint8Array(32);
+new TextEncoder().encodeInto("BTC", assetBTC);
 
-  5. Stale price detection
-     - Post a price with old timestamp, call assertPriceFresh
-     - Assert "Price is stale" error
+function makeWitnesses(sk, time = BigInt(Date.now())) {
+  return {
+    localSecretKey: ({ privateState }) => [privateState, sk],
+    getCurrentTime: ({ privateState }) => [privateState, time],
+  };
+}
 
-  6. Oracle key rotation
-     - Transfer oracle to new key, verify old key can no longer post
-     - Verify new key can post successfully
+describe("Oracle Feed", () => {
+  let oracleContract, ctx;
+
+  beforeEach(() => {
+    oracleContract = new Contract(makeWitnesses(oracleKey));
+    const addr = sampleContractAddress();
+    const initial = oracleContract.initialState(createConstructorContext({}, addr));
+    ctx = createCircuitContext(
+      addr,
+      initial.currentZswapLocalState,
+      initial.currentContractState,
+      initial.currentPrivateState,
+    );
+  });
+
+  it("should post price and read it back", () => {
+    const r1 = oracleContract.impureCircuits.postPrice(ctx, assetBTC, 50000n, 1000n);
+    const r2 = oracleContract.impureCircuits.getPrice(r1.context, assetBTC);
+    expect(r2.result).toBe(50000n);
+  });
+
+  it("should reject non-oracle posting", () => {
+    const nonOracle = new Contract(makeWitnesses(nonOracleKey));
+    expect(() => {
+      nonOracle.impureCircuits.postPrice(ctx, assetBTC, 50000n, 1000n);
+    }).toThrow("Only oracle can post prices");
+  });
+
+  it("should reject zero price", () => {
+    expect(() => {
+      oracleContract.impureCircuits.postPrice(ctx, assetBTC, 0n, 1000n);
+    }).toThrow("Price must be positive");
+  });
+
+  it("should enforce timestamp monotonicity", () => {
+    const r1 = oracleContract.impureCircuits.postPrice(ctx, assetBTC, 50000n, 1000n);
+    expect(() => {
+      oracleContract.impureCircuits.postPrice(r1.context, assetBTC, 51000n, 500n);
+    }).toThrow("Timestamp must be newer than last update");
+  });
+
+  it("should allow oracle key rotation", () => {
+    const newOraclePk = pureCircuits.publicKey(newOracleKey);
+    const r1 = oracleContract.impureCircuits.transferOracle(ctx, newOraclePk);
+    expect(() => {
+      oracleContract.impureCircuits.postPrice(r1.context, assetBTC, 50000n, 1000n);
+    }).toThrow("Only oracle can post prices");
+    const newOracle = new Contract(makeWitnesses(newOracleKey));
+    const r2 = newOracle.impureCircuits.postPrice(r1.context, assetBTC, 50000n, 1000n);
+    expect(r2.context).toBeDefined();
+  });
+
+  it("should detect stale prices", () => {
+    const r1 = oracleContract.impureCircuits.postPrice(ctx, assetBTC, 50000n, 100n);
+    const staleFinder = new Contract(makeWitnesses(nonOracleKey, 100n + 3600n + 1n));
+    expect(() => {
+      staleFinder.impureCircuits.assertPriceFresh(r1.context, assetBTC);
+    }).toThrow("Price is stale");
+  });
 });
 ```
 
@@ -236,26 +238,16 @@ describe('Oracle Feed', () => {
 
 ## Notes
 
-- Circuit complexity varies by circuit. `postPrice` is moderate (k ~12-13) with
-  authentication hash + Map operations. `postPriceBatch` is heavier (k ~14-15)
-  due to unrolled Map inserts. The batch size of 3 is a practical ceiling before
-  k becomes problematic.
-- **Time witness trust:** The `getCurrentTime` witness is not cryptographically
-  enforced. The oracle itself provides the timestamp, so it is trusted to the
-  same degree as the price data. The monotonicity check in the circuit provides
-  a minimal safeguard against timestamp manipulation.
-- **Single point of failure:** A single oracle key controls all price data. For
-  production, consider a multi-oracle pattern where N-of-M oracles must agree
-  on a price. However, the Map operations involved make this expensive. A more
-  practical approach: aggregate oracle signatures off-chain and submit a single
-  verified update.
-- **Price precision:** Prices are stored as `Uint<64>` with implicit decimal
-  scaling (e.g., 8 decimal places for crypto prices). Document the precision
-  convention clearly -- downstream contracts must use the same scaling factor.
-- **Consumer pattern:** Other contracts on Midnight cannot directly call this
-  contract's circuits. Consumer contracts would read the oracle's public ledger
-  state via the indexer and use the price data in their own circuit logic. True
-  cross-contract calls are not yet supported in Compact.
-- For LOKx specifically, this pattern is relevant for condition verification:
-  an oracle attests that a real-world event occurred (e.g., delivery confirmed),
-  triggering a RELEASE.
+- **Compiler-validated:** 5 circuits compiled, 6/6 tests pass against Compact 0.29.0.
+- **No sequence counter:** Oracle key is deterministic from secret key alone.
+  `transferOracle` replaces the key directly. No key invalidation issues.
+- **Time witness trust:** `getCurrentTime` is not cryptographically enforced. The
+  oracle provides both the timestamp and the price, so it's trusted to the same
+  degree. The monotonicity check provides minimal safeguard.
+- **Staleness subtraction:** `now - lastUpdate < stalePriceThreshold` can underflow
+  if `now < lastUpdate`. In practice, the monotonicity check on timestamps and the
+  trusted time witness prevent this.
+- **Consumer pattern:** Other Midnight contracts cannot call this contract's circuits
+  directly. Consumers read the oracle's public ledger via the indexer.
+- For LOKx: this pattern is relevant for condition verification -- an oracle attests
+  that a real-world event occurred, triggering a RELEASE.

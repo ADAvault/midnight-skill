@@ -1,5 +1,10 @@
 # Token Swap
 
+> **Not simulator-testable:** This contract uses Zswap coin operations (`receive`,
+> `sendImmediate`, `tokenType`, `kernel.self()`) that require the full Midnight
+> network stack (proof server + indexer + Zswap protocol). It cannot be validated
+> using `compact-runtime` simulator tests alone. Network validation is pending.
+
 An atomic swap contract for exchanging two different shielded token types through
 the Zswap protocol. Party A deposits token X, party B deposits token Y, and the
 contract releases each party's deposit to the other. All coin operations use
@@ -259,3 +264,7 @@ describe('Token Swap', () => {
 - Once tokens are sent via `sendImmediate`, they enter the Zswap shielded pool
   and the contract has no further control over them. This is the fundamental
   custody boundary of Midnight's token model.
+- **Validation status:** This is the only example that cannot be validated with
+  simulator tests. The `receive(coin)`, `sendImmediate`, `tokenType`, and
+  `kernel.self()` built-ins require the full Midnight network stack. Will be
+  validated on rezi@rey once devnet/testnet access is available.

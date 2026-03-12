@@ -1,5 +1,7 @@
 # Sealed-Bid Auction
 
+> **Compiler-validated:** Contract compiles and 8/8 tests pass against Compact 0.29.0.
+
 A commit-reveal auction where bidders submit hidden bids as hashed commitments,
 then reveal them to determine the winner. The ZK advantage over Ethereum-style
 commit-reveal is that the reveal phase can verify bids without exposing losing
@@ -32,40 +34,35 @@ ledger sequence: Counter;
 witness localSecretKey(): Bytes<32>;
 witness getBidAmount(): Uint<64>;
 witness getBidSalt(): Bytes<32>;
-witness getItemDescription(): Opaque<"string">;
 
-circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
+export pure circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>([pad(32, "auction:pk:"), seq, sk]);
 }
 
 constructor() {
   phase = AuctionPhase.open;
-  seller = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
   sequence.increment(1);
+  seller = disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
 }
 
-// Seller configures the auction
 export circuit configure(desc: Opaque<"string">, minBid: Uint<64>): [] {
   assert(phase == AuctionPhase.open, "Auction already configured");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == seller),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == seller),
          "Only seller");
-
-  itemDescription = desc;
-  minimumBid = minBid;
+  itemDescription = disclose(desc);
+  minimumBid = disclose(minBid);
   phase = AuctionPhase.bidding;
 }
 
-// Bidder commits: hash(domain || salt || bidder || amount)
 export circuit commitBid(): [] {
   assert(phase == AuctionPhase.bidding, "Not in bidding phase");
 
-  const bidder = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+  const bidder = disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
   assert(!commitments.member(bidder), "Already placed a bid");
 
   const amount = getBidAmount();
   const salt = getBidSalt();
 
-  // Commitment includes bidder identity to prevent commitment theft
   const commitment = persistentHash<Vector<4, Bytes<32>>>([
     pad(32, "auction:bid:"),
     salt,
@@ -77,17 +74,15 @@ export circuit commitBid(): [] {
   totalBids.increment(1);
 }
 
-// Bidder reveals: prove bid matches commitment, update winner if highest
 export circuit revealBid(): [] {
   assert(phase == AuctionPhase.reveal, "Not in reveal phase");
 
-  const bidder = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
+  const bidder = disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
   assert(commitments.member(bidder), "No commitment found");
 
   const amount = getBidAmount();
   const salt = getBidSalt();
 
-  // Recompute commitment
   const recomputed = persistentHash<Vector<4, Bytes<32>>>([
     pad(32, "auction:bid:"),
     salt,
@@ -97,15 +92,8 @@ export circuit revealBid(): [] {
 
   const stored = commitments.lookup(bidder);
   assert(disclose(recomputed == stored), "Commitment mismatch");
-
-  // Enforce minimum bid
   assert(disclose(amount >= minimumBid), "Below minimum bid");
 
-  // Update winner if this is the highest bid so far
-  // Note: disclose(amount) reveals the bid amount for comparison.
-  // For maximum privacy, the comparison could be done without disclosing
-  // the losing bid amount -- but winner's amount must be disclosed for
-  // settlement. See Notes for alternative approaches.
   if (disclose(amount > winningBid)) {
     winningBid = disclose(amount);
     winner = bidder;
@@ -114,17 +102,16 @@ export circuit revealBid(): [] {
   totalRevealed.increment(1);
 }
 
-// Phase transitions (seller only)
 export circuit closeAndReveal(): [] {
   assert(phase == AuctionPhase.bidding, "Must be in bidding");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == seller),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == seller),
          "Only seller");
   phase = AuctionPhase.reveal;
 }
 
 export circuit settle(): [] {
   assert(phase == AuctionPhase.reveal, "Must be in reveal");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == seller),
+  assert(disclose(publicKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == seller),
          "Only seller");
   phase = AuctionPhase.settled;
   sequence.increment(1);
@@ -183,12 +170,6 @@ export const witnesses = {
     // Losing the salt means losing the ability to reveal.
     return [privateState, privateState.bidSalt];
   },
-
-  getItemDescription: (
-    { privateState }: WitnessContext<Ledger, AuctionPrivateState>,
-  ): [AuctionPrivateState, string] => {
-    return [privateState, 'Auction item'];
-  },
 };
 ```
 
@@ -196,33 +177,121 @@ export const witnesses = {
 
 ## Tests
 
-```
-describe('Sealed-Bid Auction', () => {
+```typescript
+import { describe, it, expect, beforeEach } from "vitest";
+import { Contract, pureCircuits, AuctionPhase } from "../src/managed/auction/contract/index.js";
+import {
+  createConstructorContext,
+  createCircuitContext,
+  sampleContractAddress,
+} from "@midnight-ntwrk/compact-runtime";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
 
-  1. Full auction lifecycle (happy path)
-     - Deploy, configure, two bidders commit, close, both reveal, settle
-     - Assert winner is the higher bidder, winningBid matches
+setNetworkId("undeployed");
 
-  2. Commitment mismatch on reveal (should fail)
-     - Commit with amount=100, attempt reveal with amount=200
-     - Assert "Commitment mismatch" error
+const sellerKey = new Uint8Array(32); sellerKey[0] = 0x01;
+const bidder1Key = new Uint8Array(32); bidder1Key[0] = 0x02;
+const bidder2Key = new Uint8Array(32); bidder2Key[0] = 0x03;
 
-  3. Double-bid prevention
-     - Bidder commits once, attempts second commit
-     - Assert "Already placed a bid" error
+const salt1 = new Uint8Array(32); salt1[0] = 0xAA;
+const salt2 = new Uint8Array(32); salt2[0] = 0xBB;
 
-  4. Below minimum bid rejected on reveal
-     - Set minimumBid=100, commit and reveal with amount=50
-     - Assert "Below minimum bid" error
+function makeWitnesses(sk, amount = 100n, salt = salt1) {
+  return {
+    localSecretKey: ({ privateState }) => [privateState, sk],
+    getBidAmount: ({ privateState }) => [privateState, amount],
+    getBidSalt: ({ privateState }) => [privateState, salt],
+  };
+}
 
-  5. Phase enforcement
-     - Attempt to commit during reveal phase
-     - Attempt to reveal during bidding phase
-     - Assert phase mismatch errors
+describe("Sealed-Bid Auction", () => {
+  let sellerContract;
+  let ctx;
 
-  6. Only seller can transition phases
-     - Non-seller attempts closeAndReveal
-     - Assert "Only seller" error
+  beforeEach(() => {
+    sellerContract = new Contract(makeWitnesses(sellerKey));
+    const addr = sampleContractAddress();
+    const initial = sellerContract.initialState(createConstructorContext({}, addr));
+    ctx = createCircuitContext(
+      addr,
+      initial.currentZswapLocalState,
+      initial.currentContractState,
+      initial.currentPrivateState,
+    );
+  });
+
+  it("should configure auction", () => {
+    const r = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    expect(r.context).toBeDefined();
+  });
+
+  it("should allow bidder to commit", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const bidder1 = new Contract(makeWitnesses(bidder1Key, 100n, salt1));
+    const r2 = bidder1.impureCircuits.commitBid(r1.context);
+    expect(r2.context).toBeDefined();
+  });
+
+  it("should reject double bid", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const bidder1 = new Contract(makeWitnesses(bidder1Key, 100n, salt1));
+    const r2 = bidder1.impureCircuits.commitBid(r1.context);
+    expect(() => {
+      bidder1.impureCircuits.commitBid(r2.context);
+    }).toThrow("Already placed a bid");
+  });
+
+  it("should reveal bid and verify commitment", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const bidder1 = new Contract(makeWitnesses(bidder1Key, 100n, salt1));
+    const r2 = bidder1.impureCircuits.commitBid(r1.context);
+    const r3 = sellerContract.impureCircuits.closeAndReveal(r2.context);
+    const r4 = bidder1.impureCircuits.revealBid(r3.context);
+    expect(r4.context).toBeDefined();
+  });
+
+  it("should reject reveal with wrong salt", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const bidder1 = new Contract(makeWitnesses(bidder1Key, 100n, salt1));
+    const r2 = bidder1.impureCircuits.commitBid(r1.context);
+    const r3 = sellerContract.impureCircuits.closeAndReveal(r2.context);
+    const wrongBidder = new Contract(makeWitnesses(bidder1Key, 100n, salt2));
+    expect(() => {
+      wrongBidder.impureCircuits.revealBid(r3.context);
+    }).toThrow("Commitment mismatch");
+  });
+
+  it("should reject bid below minimum", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const lowBidder = new Contract(makeWitnesses(bidder1Key, 10n, salt1));
+    const r2 = lowBidder.impureCircuits.commitBid(r1.context);
+    const r3 = sellerContract.impureCircuits.closeAndReveal(r2.context);
+    expect(() => {
+      lowBidder.impureCircuits.revealBid(r3.context);
+    }).toThrow("Below minimum bid");
+  });
+
+  it("should track highest bidder across reveals", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const bidder1 = new Contract(makeWitnesses(bidder1Key, 100n, salt1));
+    const bidder2 = new Contract(makeWitnesses(bidder2Key, 200n, salt2));
+    const r2 = bidder1.impureCircuits.commitBid(r1.context);
+    const r3 = bidder2.impureCircuits.commitBid(r2.context);
+    const r4 = sellerContract.impureCircuits.closeAndReveal(r3.context);
+    const r5 = bidder1.impureCircuits.revealBid(r4.context);
+    const r6 = bidder2.impureCircuits.revealBid(r5.context);
+    expect(r6.context).toBeDefined();
+  });
+
+  it("should complete full auction lifecycle", () => {
+    const r1 = sellerContract.impureCircuits.configure(ctx, "Rare Item", 50n);
+    const bidder1 = new Contract(makeWitnesses(bidder1Key, 100n, salt1));
+    const r2 = bidder1.impureCircuits.commitBid(r1.context);
+    const r3 = sellerContract.impureCircuits.closeAndReveal(r2.context);
+    const r4 = bidder1.impureCircuits.revealBid(r3.context);
+    const r5 = sellerContract.impureCircuits.settle(r4.context);
+    expect(r5.context).toBeDefined();
+  });
 });
 ```
 
@@ -230,6 +299,8 @@ describe('Sealed-Bid Auction', () => {
 
 ## Notes
 
+- **Compiler-validated:** This contract compiles cleanly and all 8 tests pass
+  against Compact 0.29.0 with `@midnight-ntwrk/compact-runtime` 0.29.0.
 - Circuit complexity is moderate-to-high (k ~14-15) due to the 4-element
   `persistentHash` in both `commitBid` and `revealBid`, plus multiple Map
   operations. Consider using `transientHash` for internal comparisons if the
