@@ -280,33 +280,33 @@ For detailed information, consult:
 - [Testing guide](reference/testing.md) — simulator, in-memory providers, standalone network, multi-user
 - [Design patterns](reference/patterns.md) — circuit optimization, off-chain computation, module composition
 - [Standard library](reference/stdlib.md) — CompactStandardLibrary built-in functions and types
-- [Gotchas](reference/gotchas.md) — compiler bugs, SDK pitfalls, Discord-sourced real-world issues
+- [Gotchas](reference/gotchas.md) — 52 compiler bugs, SDK pitfalls, design traps (Discord + real compilation)
 - [Off-chain integration](reference/offchain.md) — TypeScript SDK, wallet integration, provider pattern, deployment
 - [Auditing methodology](reference/auditing.md) — ZK contract audit process, privacy leak detection
 
 ## Examples
 
-Working examples with full test patterns:
+Compiler-validated examples (11/12 validated against Compact 0.29.0, 75/75 tests passing):
 
-**Phase 1 — Core Patterns:**
-- [Counter](examples/counter.md) — simplest contract, increment/decrement with ledger state
-- [Bulletin Board](examples/bulletin-board.md) — witness authentication, ownership, state management
-- [Fungible Token](examples/fungible-token.md) — ERC20-equivalent with OZ module composition
+**Core Patterns:**
+- [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.
+- [Bulletin Board](examples/bulletin-board.md) — 3 circuits, 8/8 tests. Witness authentication, ownership, CRUD.
+- [Fungible Token](examples/fungible-token.md) — 7 circuits, 6/6 tests. ERC20-equivalent with OZ module composition.
 
-**Phase 2 — Privacy Patterns:**
-- [Shielded Voting](examples/shielded-voting.md) — private ballot with public tally
-- [Sealed-Bid Auction](examples/sealed-bid-auction.md) — commit-reveal with ZK verification
-- [Identity Proof](examples/identity-proof.md) — prove attributes without revealing them
+**Privacy Patterns:**
+- [Shielded Voting](examples/shielded-voting.md) — 6 circuits, 9/9 tests. Commit-reveal private ballot.
+- [Sealed-Bid Auction](examples/sealed-bid-auction.md) — 6 circuits, 8/8 tests. Commit-reveal with ZK verification.
+- [Identity Proof](examples/identity-proof.md) — 4 circuits, 6/6 tests. Selective disclosure, parameterized witnesses.
 
-**Phase 3 — DeFi & Escrow:**
-- [Escrow](examples/escrow.md) — two-party conditional exchange with time lock
-- [Time Lock](examples/time-lock.md) — time-based asset release with ZK condition verification
-- [Multi-Sig](examples/multi-sig.md) — M-of-N authorization with privacy-preserving signatures
+**DeFi & Escrow:**
+- [Escrow](examples/escrow.md) — 5 circuits, 8/8 tests. Two-party conditional exchange with deadline.
+- [Time Lock](examples/time-lock.md) — 3 circuits, 7/7 tests. LOK/RELEASE pattern for timed asset release.
+- [Multi-Sig](examples/multi-sig.md) — 6 circuits, 6/6 tests. M-of-N authorization, composite keys.
 
-**Phase 4 — Advanced:**
-- [Oracle Feed](examples/oracle-feed.md) — external data integration with witness-based verification
-- [Token Swap](examples/token-swap.md) — atomic swap with shielded coins
-- [Access Control](examples/access-control.md) — role-based permissions using OZ patterns
+**Advanced:**
+- [Oracle Feed](examples/oracle-feed.md) — 5 circuits, 6/6 tests. External data, freshness checks.
+- [Token Swap](examples/token-swap.md) — Coin operations, requires network validation.
+- [Access Control](examples/access-control.md) — 8 circuits, 6/6 tests. Role hierarchy, internal guards.
 
 ## Production References
 
