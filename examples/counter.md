@@ -52,56 +52,57 @@ export const witnesses = {};
 ## Test (Simulator)
 
 ```typescript
-import { describe, it, expect, beforeAll } from 'vitest';
-import { Contract } from '../managed/counter/contract/index.js';
+import { describe, it, expect, beforeEach } from 'vitest';
+import { Contract } from '../src/managed/counter/contract/index.js';
 import { createConstructorContext, createCircuitContext, sampleContractAddress } from '@midnight-ntwrk/compact-runtime';
 import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
 
 setNetworkId('undeployed');
 
-describe('Counter', () => {
-  let contractState: any;
-  let privateState: any;
+const witnesses = {};
 
-  beforeAll(() => {
-    const contract = new Contract(witnesses);
-    const initial = contract.initialState(
-      createConstructorContext({}, sampleContractAddress)
+describe('Counter', () => {
+  let contract;
+  let ctx;  // CircuitContext — passed as continuation between calls
+
+  beforeEach(() => {
+    contract = new Contract(witnesses);
+    const addr = sampleContractAddress();  // NOTE: this is a function, call it!
+    const initial = contract.initialState(createConstructorContext({}, addr));
+    // createCircuitContext requires 4 params: (address, zswapState, contractState, privateState)
+    ctx = createCircuitContext(
+      addr,
+      initial.currentZswapLocalState,
+      initial.currentContractState,
+      initial.currentPrivateState
     );
-    contractState = initial.currentContractState;
-    privateState = initial.currentPrivateState;
   });
 
   it('should start at 0', () => {
-    const contract = new Contract(witnesses);
-    const ctx = createCircuitContext(contractState, privateState);
     const result = contract.impureCircuits.read(ctx);
     expect(result.result).toBe(0n);
   });
 
   it('should increment', () => {
-    const contract = new Contract(witnesses);
-    let ctx = createCircuitContext(contractState, privateState);
-    const afterIncrement = contract.impureCircuits.increment(ctx);
-    // Update state
-    ctx = createCircuitContext(afterIncrement.currentContractState, afterIncrement.currentPrivateState);
-    const result = contract.impureCircuits.read(ctx);
-    expect(result.result).toBe(1n);
+    const r1 = contract.impureCircuits.increment(ctx);
+    // Pass result.context directly — it IS the continuation
+    const r2 = contract.impureCircuits.read(r1.context);
+    expect(r2.result).toBe(1n);
   });
 
-  it('should decrement', () => {
-    const contract = new Contract(witnesses);
-    let ctx = createCircuitContext(contractState, privateState);
-    // Increment first
-    const after1 = contract.impureCircuits.increment(ctx);
-    ctx = createCircuitContext(after1.currentContractState, after1.currentPrivateState);
-    const after2 = contract.impureCircuits.increment(ctx);
-    ctx = createCircuitContext(after2.currentContractState, after2.currentPrivateState);
-    // Decrement
-    const after3 = contract.impureCircuits.decrement(ctx);
-    ctx = createCircuitContext(after3.currentContractState, after3.currentPrivateState);
-    const result = contract.impureCircuits.read(ctx);
-    expect(result.result).toBe(1n);
+  it('should increment twice', () => {
+    const r1 = contract.impureCircuits.increment(ctx);
+    const r2 = contract.impureCircuits.increment(r1.context);
+    const r3 = contract.impureCircuits.read(r2.context);
+    expect(r3.result).toBe(2n);
+  });
+
+  it('should decrement after increment', () => {
+    const r1 = contract.impureCircuits.increment(ctx);
+    const r2 = contract.impureCircuits.increment(r1.context);
+    const r3 = contract.impureCircuits.decrement(r2.context);
+    const r4 = contract.impureCircuits.read(r3.context);
+    expect(r4.result).toBe(1n);
   });
 });
 ```

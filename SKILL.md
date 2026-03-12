@@ -247,18 +247,27 @@ Always test with the simulator before deploying. See [testing.md](reference/test
 
 ```typescript
 import { Contract } from "../managed/counter/contract/index.js";
-import { createConstructorContext, createCircuitContext } from "@midnight-ntwrk/compact-runtime";
+import { createConstructorContext, createCircuitContext, sampleContractAddress } from "@midnight-ntwrk/compact-runtime";
+import { setNetworkId } from "@midnight-ntwrk/midnight-js-network-id";
+
+setNetworkId("undeployed");
 
 // Create contract instance with witnesses
 const contract = new Contract<PrivateState>(witnesses);
 
-// Initialize
-const { currentPrivateState, currentContractState } =
-  contract.initialState(createConstructorContext(initialPrivateState, "0".repeat(64)));
+// Initialize — sampleContractAddress() is a FUNCTION, call it
+const addr = sampleContractAddress();
+const initial = contract.initialState(createConstructorContext(initialPrivateState, addr));
 
-// Execute circuits
-const context = createCircuitContext(currentContractState, currentPrivateState);
-const result = contract.impureCircuits.increment(context);
+// Create first circuit context — requires 4 params: (address, zswapState, contractState, privateState)
+const ctx = createCircuitContext(addr, initial.currentZswapLocalState, initial.currentContractState, initial.currentPrivateState);
+
+// Execute circuit
+const result = contract.impureCircuits.increment(ctx);
+
+// Chain calls: pass result.context directly — it IS the continuation
+const readResult = contract.impureCircuits.read(result.context);
+console.log(readResult.result); // 1n
 ```
 
 ## Reference Material
