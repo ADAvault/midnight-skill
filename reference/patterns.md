@@ -105,16 +105,16 @@ export circuit transfer(to: Bytes<32>, value: Uint<64>): Boolean {
   return FungibleToken_transfer(to, value);
 }
 
-// Only owner can pause
+// Only owner can pause (note: double underscore for internal _pause)
 export circuit pause(): [] {
-  Ownable_assertIsOwner(localSecretKey());
-  Pausable_pause();
+  Ownable_assertOnlyOwner();
+  Pausable__pause();
 }
 
 // Only owner can unpause
 export circuit unpause(): [] {
-  Ownable_assertIsOwner(localSecretKey());
-  Pausable_unpause();
+  Ownable_assertOnlyOwner();
+  Pausable__unpause();
 }
 ```
 

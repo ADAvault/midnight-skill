@@ -638,13 +638,131 @@ proxies or firewalls may block these downloads. If `compact compile` fails with
 - Or bypass the proxy for the compile step: `unset http_proxy https_proxy && compact compile ...`
 - Or use the [Brick Towers pre-baked proof server](https://github.com/bricktowers/midnight-proof-server) which includes parameters
 
+### 41. `Opaque<"string">` values cannot be constructed in-circuit
+
+String literals like `""` have type `Bytes<0>`, not `Opaque<"string">`. Attempting
+to assign a string literal to an `Opaque<"string">` ledger field causes:
+`expected right-hand side of = to have type Opaque<"string"> but received Bytes<0>`.
+
+Opaque values must come from circuit parameters or witnesses — they cannot be created
+inside circuit code.
+
+```compact
+// BAD — string literal is Bytes<0>, not Opaque<"string">
+message = "";
+
+// GOOD — receive as parameter, it comes from TypeScript as a string
+export circuit post(newMessage: Opaque<"string">): [] {
+  message = disclose(newMessage);
+}
+```
+
+### 42. Circuit parameters need `disclose()` when written to public ledger
+
+Any value written to `export ledger` must be wrapped in `disclose()` if the compiler
+considers it potentially witness-derived. This includes **circuit parameters**, even
+though they come from the caller, because the compiler cannot prove they don't carry
+witness data. Error: `potential witness-value disclosure must be declared`.
+
+```compact
+// BAD — compiler rejects: parameter could be witness-derived
+export circuit post(msg: Opaque<"string">): [] {
+  message = msg;
+}
+
+// GOOD — explicitly acknowledge disclosure
+export circuit post(msg: Opaque<"string">): [] {
+  message = disclose(msg);
+}
+```
+
+### 43. Multi-user testing: separate Contract instances, shared context chain
+
+To test multi-user scenarios in the simulator, create separate `Contract` instances
+with different witness implementations. All share the same context chain.
+
+```typescript
+const aliceContract = new Contract(makeWitnesses(aliceKey));
+const bobContract = new Contract(makeWitnesses(bobKey));
+
+// Alice posts, context continues...
+const r1 = aliceContract.impureCircuits.post(ctx, "Hello");
+// Bob operates on the same context chain
+const r2 = bobContract.impureCircuits.takeDown(r1.context); // throws if Bob isn't owner
+```
+
+### 44. Module ledger state is NOT re-exported by the consuming contract
+
+When you `import "./FungibleToken" prefix FT_`, the module's `export ledger`
+declarations are managed internally by the compiler. The consuming contract's
+compiled `Ledger` type will be `{}`. Do NOT manually declare `export ledger FT_balances: ...`
+in your contract — this creates a duplicate field, not a re-export.
+
+Access module state through circuits (`balanceOf()`, `totalSupply()`) rather than
+direct ledger reads.
+
+### 45. OZ module circuit names have underscores you might not expect
+
+- `Ownable_assertOnlyOwner()` not `Ownable_assertOwner()`
+- `Pausable__pause()` not `Pausable_pause()` (double underscore — prefix `Pausable_` + internal `_pause`)
+- `FT__mint()` not `FT_mint()` (prefix `FT_` + internal `_mint`)
+
+Always check the module source for exact circuit names.
+
+### 46. Constructor args are separate from `ConstructorContext`
+
+For contracts with constructor parameters, `initialState()` takes the context
+first, then each constructor parameter as a separate argument:
+
+```typescript
+// BAD — trying to pack args into context
+contract.initialState(createConstructorContext({ initOwner, name }, addr));
+
+// GOOD — constructor args follow the context
+contract.initialState(
+  createConstructorContext({}, ownerPK),
+  initOwner,      // first constructor param
+  "TokenName",    // second constructor param
+  "TN",           // third constructor param
+  18n,            // fourth constructor param
+  1000000n,       // fifth constructor param
+);
+```
+
+### 47. `createConstructorContext` second param sets `ownPublicKey()` identity
+
+For Ownable contracts, the coin public key passed to `createConstructorContext`
+determines what `ownPublicKey()` returns inside circuits. This must match
+the `initOwner` value or ownership checks will fail.
+
+```typescript
+// The ownerEither.left is the ZswapCoinPublicKey portion
+createConstructorContext({}, ownerEither.left)
+```
+
+### 48. `Either` types require encoded byte values, not raw Uint8Array
+
+Raw `new Uint8Array(32)` won't work as an `Either<ZswapCoinPublicKey, ContractAddress>`.
+Use `encodeCoinPublicKey()` from compact-runtime or the OZ test utilities:
+
+```typescript
+import { encodeCoinPublicKey } from "@midnight-ntwrk/compact-runtime";
+
+// OZ utility (recommended)
+const [, ownerEither] = utils.generateEitherPubKeyPair("OWNER");
+
+// Manual construction
+const pk = { bytes: encodeCoinPublicKey(hexString) };
+const either = { is_left: true, left: pk, right: emptyAddr };
+```
+
 ---
 
 ## Version Compatibility
 
 > **WARNING:** Midnight is pre-mainnet software. APIs, syntax, and tooling
 > change between versions. The gotchas above were confirmed as of early 2025
-> (Compact toolchain 0.25.x-0.28.x range). Always check the latest release
+> (Compact toolchain 0.25.x-0.29.x range). Always check the latest release
 > notes, as some of these issues may be fixed in newer versions.
 
 **The golden rule:** When something isn't working, check this list first,
