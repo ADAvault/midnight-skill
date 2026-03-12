@@ -221,7 +221,7 @@ assert(condition, "Error message");
 ```compact
 receive(coin);                                            // accept incoming coin
 sendImmediate(coin, recipient, amount);                   // send coin out
-mintToken(domainSeparator, amount, nonce, recipient);     // create new token
+mintShieldedToken(domainSeparator, amount, nonce, recipient); // create new token
 tokenType(pad(32, "myToken"), kernel.self());             // get token type ID
 ```
 
@@ -232,7 +232,7 @@ tokenType(pad(32, "myToken"), kernel.self());             // get token type ID
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
 compact self update                    # update dev tools FIRST
-compact update 0.28.0                  # then update toolchain
+compact update 0.29.0                  # then update toolchain
 
 # Scaffold, compile, test
 npx create-mn-app my-project           # scaffold new project
@@ -286,27 +286,39 @@ For detailed information, consult:
 
 ## Examples
 
-Compiler-validated examples (11/12 validated against Compact 0.29.0, 75/75 tests passing):
+Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuits compiled, 145/145 tests passing):
 
 **Core Patterns:**
 - [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.
 - [Bulletin Board](examples/bulletin-board.md) — 3 circuits, 8/8 tests. Witness authentication, ownership, CRUD.
 - [Fungible Token](examples/fungible-token.md) — 7 circuits, 6/6 tests. ERC20-equivalent with OZ module composition.
+- [NFT](examples/nft.md) — 7 circuits, 6/6 tests. Commitment-based ownership, mint/burn/transfer/approve.
+- [Rock-Paper-Scissors](examples/rock-paper-scissors.md) — 3 circuits, 6/6 tests. Minimal commit-reveal 2-player game.
 
 **Privacy Patterns:**
 - [Shielded Voting](examples/shielded-voting.md) — 6 circuits, 9/9 tests. Commit-reveal private ballot.
 - [Sealed-Bid Auction](examples/sealed-bid-auction.md) — 6 circuits, 8/8 tests. Commit-reveal with ZK verification.
 - [Identity Proof](examples/identity-proof.md) — 4 circuits, 6/6 tests. Selective disclosure, parameterized witnesses.
+- [Credential Registry](examples/credential-registry.md) — 5 circuits, 6/6 tests. Nullifier-based double-use prevention.
+- [Prescription](examples/prescription.md) — 5 circuits, 6/6 tests. Batch registration with Vector, nullifier for double-fill.
 
 **DeFi & Escrow:**
 - [Escrow](examples/escrow.md) — 5 circuits, 8/8 tests. Two-party conditional exchange with deadline.
 - [Time Lock](examples/time-lock.md) — 3 circuits, 7/7 tests. LOK/RELEASE pattern for timed asset release.
 - [Multi-Sig](examples/multi-sig.md) — 6 circuits, 6/6 tests. M-of-N authorization, composite keys.
+- [Staking](examples/staking.md) — 5 circuits, 6/6 tests. Lock period, ZK-friendly reward calculation.
+- [Crowdfunding](examples/crowdfunding.md) — 5 circuits, 6/6 tests. Anonymous backing with ZK refund proofs.
+- [Lending](examples/lending.md) — 6 circuits, 6/6 tests. Collateral, health factor, liquidation.
+- [Prediction Market](examples/prediction-market.md) — 5 circuits, 7/7 tests. Commitment-based bets with ZK payout.
 
 **Advanced:**
 - [Oracle Feed](examples/oracle-feed.md) — 5 circuits, 6/6 tests. External data, freshness checks.
 - [Token Swap](examples/token-swap.md) — Coin operations, requires network validation.
 - [Access Control](examples/access-control.md) — 8 circuits, 6/6 tests. Role hierarchy, internal guards.
+- [DID Registry](examples/did-registry.md) — 5 circuits, 6/6 tests. Document lifecycle (create/update/deactivate).
+- [Micro-DAO](examples/micro-dao.md) — 7 circuits, 7/7 tests. Token-gated voting, treasury, governance.
+- [Contract Upgradability](examples/contract-upgradability.md) — V1: 3 + V2: 7 circuits, 8/8 tests. Migration pattern.
+- [Token Minting](examples/token-minting.md) — 3 circuits. Zswap coin creation (`mintShieldedToken`), network validation pending.
 
 ## Production References
 
