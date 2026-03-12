@@ -13,19 +13,31 @@ All examples have been compiled and tested against **Compact 0.29.0** and `@midn
 | [Counter](examples/counter.md) | 3 | 5/5 | Validated |
 | [Bulletin Board](examples/bulletin-board.md) | 3 | 8/8 | Validated |
 | [Fungible Token](examples/fungible-token.md) | 7 | 6/6 | Validated (OZ modules) |
+| [NFT](examples/nft.md) | 7 | 6/6 | Validated |
+| [Rock-Paper-Scissors](examples/rock-paper-scissors.md) | 3 | 6/6 | Validated |
 | [Shielded Voting](examples/shielded-voting.md) | 6 | 9/9 | Validated |
 | [Sealed-Bid Auction](examples/sealed-bid-auction.md) | 6 | 8/8 | Validated |
+| [Identity Proof](examples/identity-proof.md) | 4 | 6/6 | Validated |
+| [Credential Registry](examples/credential-registry.md) | 5 | 6/6 | Validated |
+| [Prescription](examples/prescription.md) | 5 | 6/6 | Validated |
 | [Escrow](examples/escrow.md) | 5 | 8/8 | Validated |
 | [Time Lock](examples/time-lock.md) | 3 | 7/7 | Validated |
-| [Identity Proof](examples/identity-proof.md) | 4 | 6/6 | Validated |
 | [Multi-Sig](examples/multi-sig.md) | 6 | 6/6 | Validated |
+| [Staking](examples/staking.md) | 5 | 6/6 | Validated |
+| [Crowdfunding](examples/crowdfunding.md) | 5 | 6/6 | Validated |
+| [Lending](examples/lending.md) | 6 | 6/6 | Validated |
+| [Prediction Market](examples/prediction-market.md) | 5 | 7/7 | Validated |
 | [Oracle Feed](examples/oracle-feed.md) | 5 | 6/6 | Validated |
 | [Access Control](examples/access-control.md) | 8 | 6/6 | Validated |
+| [DID Registry](examples/did-registry.md) | 5 | 6/6 | Validated |
+| [Micro-DAO](examples/micro-dao.md) | 7 | 7/7 | Validated |
+| [Contract Upgradability](examples/contract-upgradability.md) | V1: 3, V2: 7 | 8/8 | Validated |
 | [Token Swap](examples/token-swap.md) | — | — | Network validation pending |
+| [Token Minting](examples/token-minting.md) | 3 | — | Compiled, network testing pending |
 
-**11/12 validated. 56 circuits compiled. 75/75 tests passing.**
+**22/24 validated. 127 circuits compiled. 145/145 tests passing.**
 
-Token Swap uses Zswap coin operations (`receive`, `sendImmediate`, `tokenType`) that require the full network stack and cannot be tested in the simulator.
+Token Swap and Token Minting use Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator.
 
 ## What's Covered
 
@@ -36,7 +48,7 @@ Token Swap uses Zswap coin operations (`receive`, `sendImmediate`, `tokenType`) 
 - **Design patterns** — authentication, OZ composition, off-chain computation, circuit optimization
 - **Off-chain integration** — TypeScript SDK, wallet connectivity, provider pattern, deployment
 - **52 gotchas** — compiler bugs, SDK pitfalls, proof server issues, design traps (sourced from Discord + real compilation)
-- **12 worked examples** — counter through escrow, time-lock, identity proof, and access control
+- **24 worked examples** — core patterns through DeFi, governance, identity, and contract upgradability
 
 ## Installation
 
@@ -80,15 +92,27 @@ midnight-skill/
     ├── counter.md             # Simplest contract — state + increment
     ├── bulletin-board.md      # Witness auth, CRUD, multi-user
     ├── fungible-token.md      # OZ module composition (FT + Ownable + Pausable)
+    ├── nft.md                 # Commitment-based NFT ownership
+    ├── rock-paper-scissors.md # Commit-reveal 2-player game
     ├── shielded-voting.md     # Commit-reveal private ballot
     ├── sealed-bid-auction.md  # Commit-reveal with state machine
     ├── identity-proof.md      # Selective disclosure, parameterized witnesses
+    ├── credential-registry.md # Nullifier-based double-use prevention
+    ├── prescription.md        # Batch registration, nullifier for healthcare
     ├── escrow.md              # Two-party exchange with deadline
     ├── time-lock.md           # Time-based LOK/RELEASE pattern
     ├── multi-sig.md           # M-of-N authorization, composite keys
+    ├── staking.md             # Lock period + ZK reward calculation
+    ├── crowdfunding.md        # Anonymous backing, ZK refund proofs
+    ├── lending.md             # Collateral, health factor, liquidation
+    ├── prediction-market.md   # Commitment-based bets, ZK payout
     ├── oracle-feed.md         # External data, freshness checks
     ├── token-swap.md          # Atomic swap (coin operations)
-    └── access-control.md      # Role hierarchy, internal guards
+    ├── access-control.md      # Role hierarchy, internal guards
+    ├── did-registry.md        # DID document lifecycle management
+    ├── micro-dao.md           # Token-gated voting, treasury
+    ├── contract-upgradability.md # V1/V2 migration pattern
+    └── token-minting.md       # Zswap coin creation (mintToken)
 ```
 
 ## Key Findings from Validation
