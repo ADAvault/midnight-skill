@@ -756,6 +756,99 @@ const pk = { bytes: encodeCoinPublicKey(hexString) };
 const either = { is_left: true, left: pk, right: emptyAddr };
 ```
 
+### 49. `Uint<N> + literal` produces a wider type that exceeds `Uint<N>`
+
+Adding a literal to a typed integer widens the result type beyond the original bounds.
+`Uint<32> + 1` produces `Uint<0..4294967297>`, which does not fit back into `Uint<32>`.
+This breaks Map inserts and ledger assignments.
+
+```compact
+// BAD — type error: expected Uint<32> but received Uint<0..4294967297>
+const current = approvalCounts.lookup(disclose(operationId));
+approvalCounts.insert(disclose(operationId), current + 1);
+
+// GOOD — explicit downcast
+approvalCounts.insert(disclose(operationId), (current + 1) as Uint<32>);
+```
+
+> **TIP:** This applies to any arithmetic on typed integers stored in Maps or
+> assigned to ledger fields. Always cast the result back to the expected type.
+> Also applies to subtraction, multiplication, etc. — any arithmetic can widen.
+
+### 50. No sequence counter for contracts with registered key sets
+
+Contracts that maintain a set of registered keys (multi-sig signers, ACL role
+members, oracle addresses) must NOT use sequence counters in key derivation.
+A `sequence.increment()` call would invalidate ALL registered keys, since keys
+are derived from `hash(domain || sequence || secretKey)`.
+
+```compact
+// BAD — sequence increment invalidates all registered signer keys
+export pure circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<3, Bytes<32>>>([pad(32, "pk:"), seq, sk]);
+}
+
+// GOOD — deterministic keys, no sequence dependency
+export pure circuit publicKey(sk: Bytes<32>): Bytes<32> {
+  return persistentHash<Vector<2, Bytes<32>>>([pad(32, "pk:"), sk]);
+}
+```
+
+> **WARNING:** This is a design-level gotcha, not a compiler error. The contract
+> will compile and appear to work, but any state-changing operation that bumps the
+> sequence will silently break all role/signer checks. Contracts affected:
+> multi-sig, access control, oracle, identity proof — any pattern with registered
+> key sets.
+
+### 51. Parameterized witnesses pass circuit arguments correctly
+
+`witness getAttributeValue(attrName: Bytes<32>): Uint<64>` is valid Compact syntax.
+The parameter from the circuit is passed to the TypeScript witness function as the
+second argument, after `WitnessContext`.
+
+```compact
+// Compact declaration
+witness getAttributeValue(attrName: Bytes<32>): Uint<64>;
+
+// Usage in circuit
+const value = getAttributeValue(someAttrName);
+```
+
+```typescript
+// TypeScript implementation — attrName arrives as second arg
+getAttributeValue: (
+  { privateState }: WitnessContext<Ledger, PS>,
+  attrName: Uint8Array,  // circuit parameter arrives here
+): [PS, bigint] => {
+  const name = new TextDecoder().decode(attrName).replace(/\0+$/g, '');
+  return [privateState, privateState.attributes[name] ?? 0n];
+},
+```
+
+> **NOTE:** This is documented here because the feature is not well-documented
+> in official resources but works correctly in Compact 0.29.0.
+
+### 52. Internal `circuit` (non-export) CAN access export ledger
+
+Non-exported `circuit` declarations can read and write `export ledger` state.
+Only `pure circuit` is restricted from ledger access. This enables reusable
+internal guard circuits.
+
+```compact
+// Internal circuit — NOT exported, but CAN access ledger
+circuit assertRole(role: Bytes<32>): Bytes<32> {
+  const caller = publicKey(localSecretKey());
+  const key = roleKey(role, caller);
+  assert(roleMembers.member(disclose(key)), "Missing required role");
+  return caller;
+}
+```
+
+> **NOTE:** `pure circuit` = no ledger access, no witnesses. `circuit` = ledger
+> access + witnesses allowed. `export circuit` = same as `circuit` but callable
+> from outside. The `export` keyword controls external visibility, not ledger
+> access.
+
 ---
 
 ## Version Compatibility
