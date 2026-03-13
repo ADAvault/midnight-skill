@@ -1,12 +1,12 @@
 # Midnight Compact Smart Contract Skill
 
-A comprehensive [Agent Skill](https://agentskills.io) for writing, testing, and deploying **Compact smart contracts** on the **Midnight blockchain**. Built from production experience, Discord community knowledge, and real-world gotchas.
+An [Agent Skill](https://agentskills.io) for writing, testing, and deploying **Compact smart contracts** on the **Midnight blockchain**. Built from Discord community knowledge, compiler validation, and real-world gotchas.
 
 Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI coding assistants.
 
 ## Compiler-Validated
 
-All examples have been compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk/compact-runtime` 0.29.0. This is not aspirational documentation — every contract compiles, every test passes.
+All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk/compact-runtime` 0.29.0.
 
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
@@ -47,7 +47,7 @@ Token Swap and Token Minting use Zswap coin operations (`mintShieldedToken`, `to
 - **Testing** — simulator, standalone network, testnet (3-level testing approach)
 - **Design patterns** — authentication, OZ composition, off-chain computation, circuit optimization
 - **Off-chain integration** — TypeScript SDK, wallet connectivity, provider pattern, deployment
-- **52 gotchas** — compiler bugs, SDK pitfalls, proof server issues, design traps (sourced from Discord + real compilation)
+- **Gotchas** — compiler bugs, SDK pitfalls, proof server issues, design traps (sourced from Discord + real compilation)
 - **24 worked examples** — core patterns through DeFi, governance, identity, and contract upgradability
 
 ## Installation
@@ -112,7 +112,7 @@ midnight-skill/
     ├── did-registry.md        # DID document lifecycle management
     ├── micro-dao.md           # Token-gated voting, treasury
     ├── contract-upgradability.md # V1/V2 migration pattern
-    └── token-minting.md       # Zswap coin creation (mintToken)
+    └── token-minting.md       # Zswap coin creation (mintShieldedToken)
 ```
 
 ## Key Findings from Validation
@@ -130,7 +130,7 @@ All findings are documented in [gotchas.md](reference/gotchas.md) (#49-#52) and 
 ## Sources
 
 Built from:
-- **8,948 dev-chat messages** from the Midnight Discord (Feb 2024 — Mar 2026)
+- **Midnight Discord dev-chat** (Feb 2024 — Mar 2026)
 - **OpenZeppelin/compact-contracts** — canonical Compact library
 - **Official Midnight examples** — counter, bulletin board
 - **Brick Towers** projects — seabattle, local-network, proof-server, RWA
