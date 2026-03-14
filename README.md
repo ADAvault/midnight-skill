@@ -192,7 +192,7 @@ Built from:
 - **Brick Towers** projects — seabattle, local-network, proof-server, RWA
 - **Existing community skills** — UvRoxx, FractionEstate, OverGuild, mzf11125
 - **Compiler validation** — every example compiled and tested against Compact 0.29.0
-- **Preprod deployment** — 13 contracts deployed on Midnight preprod with ZK proofs verified on-chain
+- **Preprod deployment** — 28 contracts deployed on Midnight preprod with ZK proofs verified on-chain
 
 ## Contributing
 
