@@ -1,6 +1,6 @@
 # Lottery / Verifiable Randomness
 
-> **Compiler-validated:** 4 circuits compiled against Compact 0.29.0.
+> **Compiler-validated:** 4 circuits compiled, 8/8 tests passing against Compact 0.29.0.
 
 A fair lottery where multiple participants commit random values, then reveal them.
 The combined hash of all revealed values determines the winner. No single

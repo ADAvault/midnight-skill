@@ -34,13 +34,13 @@ All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk
 | [Contract Upgradability](examples/contract-upgradability.md) | V1: 3, V2: 7 | 8/8 | Validated |
 | [Token Swap](examples/token-swap.md) | — | — | Network validation pending |
 | [Token Minting](examples/token-minting.md) | 3 | — | Preprod deployed |
-| [Privacy Mixer](examples/privacy-mixer.md) | 3 | — | Compiled |
-| [Lottery](examples/lottery.md) | 4 | — | Compiled |
-| [Vesting](examples/vesting.md) | 4 | — | Compiled |
-| [Revenue Sharing](examples/revenue-sharing.md) | 3 | — | Compiled |
-| [Supply Chain](examples/supply-chain.md) | 4 | — | Compiled |
+| [Privacy Mixer](examples/privacy-mixer.md) | 3 | 7/7 | Validated |
+| [Lottery](examples/lottery.md) | 4 | 8/8 | Validated |
+| [Vesting](examples/vesting.md) | 4 | 8/8 | Validated |
+| [Revenue Sharing](examples/revenue-sharing.md) | 3 | 7/7 | Validated |
+| [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 
-**22/24 validated + 5 compiled. 145 circuits compiled. 145/145 tests passing. 13 contracts deployed on preprod.**
+**27/29 validated. 145 circuits compiled. 182/182 tests passing. 13 contracts deployed on preprod.**
 
 Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator.
 

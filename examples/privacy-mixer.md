@@ -1,6 +1,6 @@
 # Privacy Mixer
 
-> **Compiler-validated:** 3 circuits compiled against Compact 0.29.0.
+> **Compiler-validated:** 3 circuits compiled, 7/7 tests passing against Compact 0.29.0.
 
 A privacy-preserving mixer (similar to Tornado Cash) for the Midnight blockchain.
 Users deposit a fixed denomination by publishing a commitment — a hash of a secret
