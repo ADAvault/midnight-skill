@@ -336,7 +336,7 @@ For detailed information, consult:
 
 ## Examples
 
-Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuits compiled, 145/145 tests passing, 13 contracts deployed on preprod):
+29 examples (22 validated + 5 compiled + 2 network-only). 145 circuits compiled, 145/145 tests passing, 13 contracts deployed on preprod:
 
 **Core Patterns:**
 - [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.
@@ -351,6 +351,7 @@ Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuit
 - [Identity Proof](examples/identity-proof.md) — 4 circuits, 6/6 tests. Selective disclosure, parameterized witnesses.
 - [Credential Registry](examples/credential-registry.md) — 5 circuits, 6/6 tests. Nullifier-based double-use prevention.
 - [Prescription](examples/prescription.md) — 5 circuits, 6/6 tests. Batch registration with Vector, nullifier for double-fill.
+- [Privacy Mixer](examples/privacy-mixer.md) — 3 circuits, compiled. Commitment deposits, nullifier withdrawals.
 
 **DeFi & Escrow:**
 - [Escrow](examples/escrow.md) — 5 circuits, 8/8 tests. Two-party conditional exchange with deadline.
@@ -360,6 +361,9 @@ Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuit
 - [Crowdfunding](examples/crowdfunding.md) — 5 circuits, 6/6 tests. Anonymous backing with ZK refund proofs.
 - [Lending](examples/lending.md) — 6 circuits, 6/6 tests. Collateral, health factor, liquidation.
 - [Prediction Market](examples/prediction-market.md) — 5 circuits, 7/7 tests. Commitment-based bets with ZK payout.
+- [Vesting](examples/vesting.md) — 4 circuits, compiled. Time-based tranche release schedule.
+- [Revenue Sharing](examples/revenue-sharing.md) — 3 circuits, compiled. Private share allocations, ZK withdrawal.
+- [Lottery](examples/lottery.md) — 4 circuits, compiled. Commit-reveal multi-party randomness.
 
 **Advanced:**
 - [Oracle Feed](examples/oracle-feed.md) — 5 circuits, 6/6 tests. External data, freshness checks.
@@ -369,6 +373,7 @@ Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuit
 - [Micro-DAO](examples/micro-dao.md) — 7 circuits, 7/7 tests. Token-gated voting, treasury, governance.
 - [Contract Upgradability](examples/contract-upgradability.md) — V1: 3 + V2: 7 circuits, 8/8 tests. Migration pattern.
 - [Token Minting](examples/token-minting.md) — 3 circuits. Zswap coin creation (`mintShieldedToken`), preprod deployed.
+- [Supply Chain](examples/supply-chain.md) — 4 circuits, compiled. Selective disclosure provenance tracking.
 
 ## Production References
 

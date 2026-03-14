@@ -34,8 +34,13 @@ All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk
 | [Contract Upgradability](examples/contract-upgradability.md) | V1: 3, V2: 7 | 8/8 | Validated |
 | [Token Swap](examples/token-swap.md) | — | — | Network validation pending |
 | [Token Minting](examples/token-minting.md) | 3 | — | Preprod deployed |
+| [Privacy Mixer](examples/privacy-mixer.md) | 3 | — | Compiled |
+| [Lottery](examples/lottery.md) | 4 | — | Compiled |
+| [Vesting](examples/vesting.md) | 4 | — | Compiled |
+| [Revenue Sharing](examples/revenue-sharing.md) | 3 | — | Compiled |
+| [Supply Chain](examples/supply-chain.md) | 4 | — | Compiled |
 
-**22/24 validated. 127 circuits compiled. 145/145 tests passing. 13 contracts deployed on preprod.**
+**22/24 validated + 5 compiled. 145 circuits compiled. 145/145 tests passing. 13 contracts deployed on preprod.**
 
 Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator.
 
@@ -79,7 +84,7 @@ DUST is Midnight's fee token — a high-precision micro-token generated continuo
 - **Design patterns** — authentication, OZ composition, off-chain computation, circuit optimization
 - **Off-chain integration** — TypeScript SDK, wallet connectivity, provider pattern, deployment
 - **Gotchas** — compiler bugs, SDK pitfalls, proof server issues, design traps (sourced from Discord + real compilation)
-- **24 worked examples** — core patterns through DeFi, governance, identity, and contract upgradability
+- **29 worked examples** — core patterns through DeFi, governance, identity, contract upgradability, and supply chain
 
 ## Installation
 
@@ -143,7 +148,12 @@ midnight-skill/
     ├── did-registry.md        # DID document lifecycle management
     ├── micro-dao.md           # Token-gated voting, treasury
     ├── contract-upgradability.md # V1/V2 migration pattern
-    └── token-minting.md       # Zswap coin creation (mintShieldedToken)
+    ├── token-minting.md       # Zswap coin creation (mintShieldedToken)
+    ├── privacy-mixer.md       # Nullifier-based deposit/withdraw mixer
+    ├── lottery.md             # Commit-reveal multi-party randomness
+    ├── vesting.md             # Time-based tranche release schedule
+    ├── revenue-sharing.md     # Private share allocations, ZK withdrawal
+    └── supply-chain.md        # Selective disclosure provenance tracking
 ```
 
 ## Key Findings from Validation
