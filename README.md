@@ -179,9 +179,18 @@ Built from:
 - **Compiler validation** — every example compiled and tested against Compact 0.29.0
 - **Preprod deployment** — 13 contracts deployed on Midnight preprod with ZK proofs verified on-chain
 
+## Contributing
+
+PRs welcome — especially from Midnight developers, ZK researchers, and privacy protocol builders. Areas of interest:
+
+- New contract patterns or examples
+- Security findings or additional ZK attack vectors
+- Corrections to existing reference material
+- Off-chain integration patterns for new SDK versions
+
 ## Companion Skill
 
-See also: [cardano-skill](https://github.com/adavault/cardano-skill) — the equivalent skill for smart contracts on Cardano (Aiken, Plutus, Marlowe).
+See also: [cardano-skill](https://github.com/ADAvault/cardano-skill) — the equivalent skill for Aiken smart contracts on Cardano (eUTxO, multi-validator, CIP-113).
 
 ## License
 
