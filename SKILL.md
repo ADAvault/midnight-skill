@@ -270,6 +270,42 @@ const readResult = contract.impureCircuits.read(result.context);
 console.log(readResult.result); // 1n
 ```
 
+## DUST Fee Economics
+
+DUST is Midnight's fee token — a high-precision micro-token generated continuously from tNight holdings. All transaction fees are paid in DUST.
+
+### Generation Model
+
+| Parameter | Value | Meaning |
+|-----------|-------|---------|
+| `nightDustRatio` | 5,000,000,000 | Peak DUST generated per tNight per second |
+| `timeToCapSeconds` | 604,815 | ~7 days to reach generation cap |
+| `generationDecayRate` | 8,267 | Decay factor for generation curve |
+| `dustGracePeriodSeconds` | 10,800 | 3-hour grace period before generation starts decaying |
+
+DUST has no decimal places — values are in the smallest indivisible unit. The numbers are intentionally large to provide high precision for fee calculation.
+
+### Deployment Costs (preprod, protocol v21000)
+
+Measured from 13 contract deployments on preprod (March 2026):
+
+| Complexity | Fee Range | Examples |
+|------------|-----------|----------|
+| Simple (3 circuits) | 331B–367B DUST | Counter, RPS, Upgrade-V1, Token Minting |
+| Medium (5 circuits) | 479B–564B DUST | Credential, DID, Prescription, Market, Staking, Crowdfunding |
+| Complex (6-7 circuits) | 629B–721B DUST | NFT, DAO, Lending, Upgrade-V2 |
+
+- Fees are **deterministic** — `paidFees` matches `estimatedFees` exactly
+- Deploy time: 16–22 seconds (includes ZK proof generation + on-chain confirmation)
+- With 2,000 tNight, DUST generation outpaces deployment fees — all 13 contracts deployed with DUST to spare
+
+### Practical Guidance
+
+- DUST accrues passively from tNight — no explicit conversion needed
+- The `DustWallet` SDK handles fee calculation and payment automatically
+- Set `additionalFeeOverhead` in `DustWallet` config for fee buffer (default examples use 300T DUST)
+- On preprod, request tNight from the [Midnight faucet](https://faucet.preprod.midnight.network/) — 1,000 tNight per request is sufficient for dozens of deployments
+
 ## Reference Material
 
 For detailed information, consult:
@@ -286,7 +322,7 @@ For detailed information, consult:
 
 ## Examples
 
-Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuits compiled, 145/145 tests passing):
+Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuits compiled, 145/145 tests passing, 13 contracts deployed on preprod):
 
 **Core Patterns:**
 - [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.
@@ -318,7 +354,7 @@ Compiler-validated examples (22/24 validated against Compact 0.29.0, 127 circuit
 - [DID Registry](examples/did-registry.md) — 5 circuits, 6/6 tests. Document lifecycle (create/update/deactivate).
 - [Micro-DAO](examples/micro-dao.md) — 7 circuits, 7/7 tests. Token-gated voting, treasury, governance.
 - [Contract Upgradability](examples/contract-upgradability.md) — V1: 3 + V2: 7 circuits, 8/8 tests. Migration pattern.
-- [Token Minting](examples/token-minting.md) — 3 circuits. Zswap coin creation (`mintShieldedToken`), network validation pending.
+- [Token Minting](examples/token-minting.md) — 3 circuits. Zswap coin creation (`mintShieldedToken`), preprod deployed.
 
 ## Production References
 
