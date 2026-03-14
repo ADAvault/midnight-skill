@@ -849,6 +849,58 @@ circuit assertRole(role: Bytes<32>): Bytes<32> {
 > from outside. The `export` keyword controls external visibility, not ledger
 > access.
 
+### 53. `receive` renamed to `receiveShielded`
+
+The `receive()` function for accepting shielded coins was renamed. Using the old name produces:
+
+```
+apparent use of an old standard-library / ledger operator name receive:
+    the new name is receiveShielded
+```
+
+Fix: `receiveShielded(disclose(coin))` where `coin` is a `ShieldedCoinInfo` parameter.
+
+### 54. `sendImmediate` renamed to `sendImmediateShielded`
+
+Same rename pattern:
+
+```
+apparent use of an old standard-library / ledger operator name sendImmediate:
+    the new name is sendImmediateShielded
+```
+
+Fix: `sendImmediateShielded(disclose(coin), recipient, disclose(amount))`
+
+### 55. `CoinInfo` type is actually `ShieldedCoinInfo`
+
+The shielded coin descriptor type is `ShieldedCoinInfo`, not `CoinInfo`. It's a struct:
+
+```compact
+ShieldedCoinInfo<nonce: Bytes<32>, color: Bytes<32>, value: Uint<128>>
+```
+
+Access fields via `coin.nonce`, `coin.color`, `coin.value`.
+
+### 56. `ownPublicKey()` is a stdlib built-in, not a witness
+
+`ownPublicKey()` returns the caller's `ZswapCoinPublicKey` and is provided by `CompactStandardLibrary`. Declaring it as a witness causes a "call site ambiguity" error:
+
+```
+call site ambiguity (multiple compatible functions) in call to ownPublicKey
+```
+
+Fix: Remove the `witness ownPublicKey(): ZswapCoinPublicKey;` declaration. Just call `ownPublicKey()` directly.
+
+### 57. `||` with witness-derived values triggers disclosure error
+
+Using `||` (logical OR) in comparisons involving witness-derived hashes creates a short-circuit conditional branch that the compiler flags as a potential disclosure:
+
+```
+potential witness-value disclosure must be declared but is not
+```
+
+Fix: Restructure to avoid `||` with witness values. Use separate assertions or remove the auth check where it's not security-critical.
+
 ---
 
 ## Version Compatibility

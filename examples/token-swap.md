@@ -1,14 +1,11 @@
 # Token Swap
 
-> **Not simulator-testable:** This contract uses Zswap coin operations (`receive`,
-> `sendImmediate`, `tokenType`, `kernel.self()`) that require the full Midnight
-> network stack (proof server + indexer + Zswap protocol). It cannot be validated
-> using `compact-runtime` simulator tests alone. Network validation is pending.
+> **Compiler-validated:** 6 circuits compiled and deployed on preprod against Compact 0.29.0.
 
 An atomic swap contract for exchanging two different shielded token types through
 the Zswap protocol. Party A deposits token X, party B deposits token Y, and the
 contract releases each party's deposit to the other. All coin operations use
-Midnight's built-in shielded token mechanics (`receive`, `sendImmediate`,
+Midnight's built-in shielded token mechanics (`receiveShielded`, `sendImmediateShielded`,
 `mintToken`, `tokenType`). Demonstrates coin lifecycle, shielded transfer
 mechanics, and the atomic exchange pattern.
 
@@ -21,7 +18,7 @@ pragma language_version >= 0.20;
 
 import CompactStandardLibrary;
 
-export enum SwapState { open, partyAFunded, partyBFunded, bothFunded, completed, cancelled }
+export enum SwapState { open, initialized, partyAFunded, bothFunded, completed, cancelled }
 
 export ledger state: SwapState;
 export ledger partyA: Bytes<32>;
@@ -30,12 +27,13 @@ export ledger tokenDomainA: Bytes<32>;
 export ledger tokenDomainB: Bytes<32>;
 export ledger amountA: Uint<64>;
 export ledger amountB: Uint<64>;
+export ledger coinPkA: ZswapCoinPublicKey;
+export ledger coinPkB: ZswapCoinPublicKey;
 ledger sequence: Counter;
 
 witness localSecretKey(): Bytes<32>;
-witness ownPublicKey(): ZswapCoinPublicKey;
 
-circuit publicKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
+circuit authKey(sk: Bytes<32>, seq: Bytes<32>): Bytes<32> {
   return persistentHash<Vector<3, Bytes<32>>>([pad(32, "swap:pk:"), seq, sk]);
 }
 
@@ -44,7 +42,7 @@ constructor() {
   sequence.increment(1);
 }
 
-// Party A initializes the swap terms
+// Party A initializes the swap terms and stores their coin public key
 export circuit initSwap(
   bParty: Bytes<32>,
   domainA: Bytes<32>,
@@ -54,93 +52,71 @@ export circuit initSwap(
 ): [] {
   assert(state == SwapState.open, "Swap already initialized");
 
-  partyA = disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>));
-  partyB = bParty;
-  tokenDomainA = domainA;
-  tokenDomainB = domainB;
-  amountA = amtA;
-  amountB = amtB;
+  partyA = disclose(authKey(localSecretKey(), sequence.read() as Field as Bytes<32>));
+  partyB = disclose(bParty);
+  tokenDomainA = disclose(domainA);
+  tokenDomainB = disclose(domainB);
+  amountA = disclose(amtA);
+  amountB = disclose(amtB);
+  coinPkA = disclose(ownPublicKey());
+
+  state = SwapState.initialized;
 }
 
-// Party A deposits their tokens into the contract
-export circuit depositA(): [] {
-  assert(state == SwapState.open, "Invalid state for party A deposit");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == partyA),
+// Party A deposits their tokens
+export circuit depositA(coin: ShieldedCoinInfo): [] {
+  assert(state == SwapState.initialized, "Invalid state for party A deposit");
+  assert(disclose(authKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == partyA),
          "Not party A");
 
-  // Accept the incoming coin -- the coin metadata (type, amount)
-  // is verified by the Zswap protocol layer
-  receive(coin);
+  assert(disclose(coin.color == tokenType(tokenDomainA, kernel.self())), "Wrong token type");
+
+  receiveShielded(disclose(coin));
 
   state = SwapState.partyAFunded;
 }
 
 // Party B deposits their tokens
-export circuit depositB(): [] {
+export circuit depositB(coin: ShieldedCoinInfo): [] {
   assert(state == SwapState.partyAFunded, "Party A must deposit first");
-  assert(disclose(publicKey(localSecretKey(), sequence as Field as Bytes<32>) == partyB),
+  assert(disclose(authKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == partyB),
          "Not party B");
 
-  receive(coin);
+  assert(disclose(coin.color == tokenType(tokenDomainB, kernel.self())), "Wrong token type");
+
+  receiveShielded(disclose(coin));
+  coinPkB = disclose(ownPublicKey());
 
   state = SwapState.bothFunded;
 }
 
-// Execute the swap: send A's tokens to B, B's tokens to A
-export circuit executeSwap(): [] {
+// Execute the swap -- send each party's tokens to the other
+// No auth check: once both funded, anyone can trigger (incentive-aligned)
+export circuit executeSwap(coinA: ShieldedCoinInfo, coinB: ShieldedCoinInfo): [] {
   assert(state == SwapState.bothFunded, "Both parties must fund first");
 
-  // Either party can trigger execution once both have funded
-  const caller = publicKey(localSecretKey(), sequence as Field as Bytes<32>);
-  assert(disclose(caller == partyA || caller == partyB), "Not a swap party");
-
-  // Get the public keys for coin delivery
-  const recipientPk = ownPublicKey();
-
-  // Construct token types from stored domain separators
-  const tokenTypeA = tokenType(tokenDomainA, kernel.self());
-  const tokenTypeB = tokenType(tokenDomainB, kernel.self());
-
-  // Send party A's tokens to party B (or vice versa depending on caller)
-  // NOTE: In a full implementation, you would need both parties'
-  // ZswapCoinPublicKeys. Since ownPublicKey() returns the CALLER's key,
-  // a production version would store each party's coin public key during
-  // deposit and use them here.
-  //
-  // Simplified: caller receives the other party's tokens
-  if (disclose(caller == partyA)) {
-    // Party A triggered: send B's tokens to A
-    sendImmediate(tokenTypeB, left<ZswapCoinPublicKey, ContractAddress>(recipientPk), amountB);
-  } else {
-    // Party B triggered: send A's tokens to B
-    sendImmediate(tokenTypeA, left<ZswapCoinPublicKey, ContractAddress>(recipientPk), amountA);
-  }
+  sendImmediateShielded(disclose(coinA), left<ZswapCoinPublicKey, ContractAddress>(coinPkB), disclose(amountA));
+  sendImmediateShielded(disclose(coinB), left<ZswapCoinPublicKey, ContractAddress>(coinPkA), disclose(amountB));
 
   state = SwapState.completed;
   sequence.increment(1);
 }
 
-// Cancel and refund (only before both funded, or by mutual agreement)
-export circuit cancel(): [] {
-  assert(state != SwapState.completed, "Already completed");
-  assert(state != SwapState.cancelled, "Already cancelled");
+// Cancel and refund -- only party A can cancel (they have deposits at risk)
+export circuit cancelAndRefund(coin: ShieldedCoinInfo): [] {
+  assert(state == SwapState.partyAFunded, "Can only cancel in partyAFunded state");
+  assert(disclose(authKey(localSecretKey(), sequence.read() as Field as Bytes<32>) == partyA),
+         "Only party A can cancel");
 
-  const caller = publicKey(localSecretKey(), sequence as Field as Bytes<32>);
+  sendImmediateShielded(disclose(coin), left<ZswapCoinPublicKey, ContractAddress>(coinPkA), disclose(amountA));
 
-  // Only the depositing party can cancel in partial-fund state
-  if (state == SwapState.partyAFunded) {
-    assert(disclose(caller == partyA), "Only party A can cancel");
-    // Refund party A's tokens
-    const tokenTypeA = tokenType(tokenDomainA, kernel.self());
-    const pk = ownPublicKey();
-    sendImmediate(tokenTypeA, left<ZswapCoinPublicKey, ContractAddress>(pk), amountA);
-  }
+  state = SwapState.cancelled;
+  sequence.increment(1);
+}
 
-  // In open state, either party can cancel (nothing to refund)
-  if (state == SwapState.open) {
-    assert(disclose(caller == partyA || caller == partyB), "Not a swap party");
-  }
-
+// Cancel before any deposits (either party)
+export circuit cancelOpen(): [] {
+  assert(state == SwapState.initialized, "Can only cancel in initialized state");
   state = SwapState.cancelled;
   sequence.increment(1);
 }
@@ -150,23 +126,28 @@ export circuit cancel(): [] {
 
 ## Key Concepts
 
-- **Shielded coin operations:** `receive(coin)` accepts tokens into the contract.
-  `sendImmediate(tokenType, recipient, amount)` sends tokens from the contract
-  to a wallet. The Zswap protocol handles privacy -- amounts and recipients are
-  hidden from chain observers.
+- **Shielded coin operations:** `receiveShielded(disclose(coin))` accepts tokens
+  into the contract, where `coin` is a `ShieldedCoinInfo` parameter (struct with
+  `nonce`, `color`, `value` fields). `sendImmediateShielded(disclose(coin), recipient, disclose(amount))`
+  sends tokens from the contract to a wallet. The Zswap protocol handles
+  privacy -- amounts and recipients are hidden from chain observers.
+- **`ShieldedCoinInfo` type:** The shielded coin descriptor passed to deposit
+  circuits. Fields: `coin.nonce` (`Bytes<32>`), `coin.color` (`Bytes<32>`),
+  `coin.value` (`Uint<128>`). The old name `CoinInfo` no longer works.
 - **Token type derivation:** `tokenType(domain, contractAddress)` produces a
   deterministic token type identifier. The domain separator (`Bytes<32>`) and
   contract address together define a unique token type.
 - **Atomic exchange:** Both parties must deposit before either can execute. The
   state machine ensures no partial execution -- either both transfers happen
-  (via `executeSwap`) or both are refunded (via `cancel`).
-- **Custody boundary:** Once tokens leave the contract via `sendImmediate`, the
-  contract has no further control. The swap is atomic within the contract's scope,
-  but the received tokens are free-floating in the Zswap pool after delivery.
-- **`ownPublicKey()` vs `publicKey(sk, seq)`:** `ownPublicKey()` returns the
-  caller's Zswap coin public key (for token operations). `publicKey(sk, seq)` is
-  the contract-specific identity used for authentication. They serve different
-  purposes and are not interchangeable.
+  (via `executeSwap`) or both are refunded (via `cancelAndRefund`).
+- **Custody boundary:** Once tokens leave the contract via `sendImmediateShielded`,
+  the contract has no further control. The swap is atomic within the contract's
+  scope, but the received tokens are free-floating in the Zswap pool after delivery.
+- **`ownPublicKey()` is a stdlib built-in:** It returns the caller's
+  `ZswapCoinPublicKey` and is provided by `CompactStandardLibrary`. Do NOT
+  declare it as a witness -- doing so causes a "call site ambiguity" error.
+  `authKey(sk, seq)` is the contract-specific identity used for authentication.
+  They serve different purposes and are not interchangeable.
 
 ---
 
@@ -178,7 +159,6 @@ import { Ledger } from '../managed/swap/contract/index.cjs';
 
 export interface SwapPrivateState {
   readonly secretKey: Uint8Array;
-  readonly coinPublicKey: Uint8Array;
 }
 
 export const witnesses = {
@@ -187,14 +167,8 @@ export const witnesses = {
   ): [SwapPrivateState, Uint8Array] => {
     return [privateState, privateState.secretKey];
   },
-
-  ownPublicKey: (
-    { privateState }: WitnessContext<Ledger, SwapPrivateState>,
-  ): [SwapPrivateState, Uint8Array] => {
-    // In production, this comes from the wallet SDK.
-    // The wallet provides a fresh unlinkable key per transaction.
-    return [privateState, privateState.coinPublicKey];
-  },
+  // NOTE: ownPublicKey() is a stdlib built-in provided by CompactStandardLibrary.
+  // Do NOT declare it as a witness. The wallet SDK handles it automatically.
 };
 
 // Helper: create the token domain separator from a human-readable name
@@ -244,27 +218,24 @@ describe('Token Swap', () => {
 ## Notes
 
 - Circuit complexity is moderate (k ~13-14). The `executeSwap` circuit is the
-  heaviest due to `tokenType` derivation, `sendImmediate`, and conditional logic.
-  The `depositA`/`depositB` circuits are lightweight (authentication + `receive`).
-- **Two-transaction execution limitation:** In this simplified design,
-  `executeSwap` sends tokens to the caller only. A production implementation
-  would need to store each party's `ZswapCoinPublicKey` during their deposit
-  phase and use both stored keys during execution to send tokens to the correct
-  recipients in a single transaction.
-- **Coin type verification:** The `receive(coin)` call accepts any coin sent to
-  the contract. The Zswap protocol layer verifies the coin is valid, but the
-  contract should ideally verify the coin type matches the expected
-  `tokenDomainA` or `tokenDomainB`. Current Compact may not provide a way to
-  inspect the received coin's type within the circuit -- check the latest SDK
-  documentation.
+  heaviest due to `sendImmediateShielded` x2 and coin parameter handling.
+  The `depositA`/`depositB` circuits are lightweight (authentication + `receiveShielded`).
+- **Coin public keys stored during deposit:** Each party's `ZswapCoinPublicKey`
+  is captured via `ownPublicKey()` (a stdlib built-in) and stored in ledger
+  state (`coinPkA`, `coinPkB`). This allows `executeSwap` to send tokens to
+  the correct recipients without requiring either party to be the caller.
+- **Coin type verification:** The `ShieldedCoinInfo` parameter has a `.color`
+  field that can be compared against `tokenType(domain, kernel.self())` to
+  verify the deposited token matches expectations. This is enforced in both
+  `depositA` and `depositB`.
 - **Partial cancellation with refunds for `bothFunded` state** is not implemented
   in this example. A production version would need to handle the case where both
   parties funded but one wants to cancel -- this requires returning both deposits,
-  which means two `sendImmediate` calls and storing both parties' coin public keys.
-- Once tokens are sent via `sendImmediate`, they enter the Zswap shielded pool
-  and the contract has no further control over them. This is the fundamental
+  which means two `sendImmediateShielded` calls.
+- Once tokens are sent via `sendImmediateShielded`, they enter the Zswap shielded
+  pool and the contract has no further control over them. This is the fundamental
   custody boundary of Midnight's token model.
-- **Validation status:** This is the only example that cannot be validated with
-  simulator tests. The `receive(coin)`, `sendImmediate`, `tokenType`, and
-  `kernel.self()` built-ins require the full Midnight network stack. Will be
-  validated on rezi@rey once devnet/testnet access is available.
+- **Validation status:** Compiled and deployed on preprod (6 circuits, block
+  625619, 645B DUST). Uses `receiveShielded`, `sendImmediateShielded`, `tokenType`,
+  `ownPublicKey()`, and `kernel.self()` -- all require the full Midnight network
+  stack and cannot be tested with `compact-runtime` simulator alone.

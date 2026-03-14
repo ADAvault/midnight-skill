@@ -4,6 +4,8 @@ An [Agent Skill](https://agentskills.io) for writing, testing, and deploying **C
 
 Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI coding assistants.
 
+> **Important:** These examples are educational references. Any smart contract generated using this skill should be professionally audited before deployment to mainnet. AI-assisted code generation does not replace security review.
+
 ## Compiler-Validated
 
 All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk/compact-runtime` 0.29.0.
@@ -32,7 +34,7 @@ All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk
 | [DID Registry](examples/did-registry.md) | 5 | 6/6 | Validated |
 | [Micro-DAO](examples/micro-dao.md) | 7 | 7/7 | Validated |
 | [Contract Upgradability](examples/contract-upgradability.md) | V1: 3, V2: 7 | 8/8 | Validated |
-| [Token Swap](examples/token-swap.md) | — | — | Network validation pending |
+| [Token Swap](examples/token-swap.md) | 6 | — | Preprod deployed |
 | [Token Minting](examples/token-minting.md) | 3 | — | Preprod deployed |
 | [Privacy Mixer](examples/privacy-mixer.md) | 3 | 7/7 | Validated |
 | [Lottery](examples/lottery.md) | 4 | 8/8 | Validated |
@@ -40,13 +42,13 @@ All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk
 | [Revenue Sharing](examples/revenue-sharing.md) | 3 | 7/7 | Validated |
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 
-**27/29 validated. 145 circuits compiled. 182/182 tests passing. 29 contracts deployed on preprod.**
+**27/29 validated. 151 circuits compiled. 182/182 tests passing. 30 contracts deployed on preprod.**
 
-Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator.
+Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator. Both are compiled and deployed on preprod.
 
 ## Preprod Deployment
 
-29 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
+30 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
 
 | Contract | Circuits | DUST Fee | Deploy Time | Block |
 |----------|----------|----------|-------------|-------|
@@ -70,6 +72,7 @@ Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel
 | Micro-DAO | 7 | 697B | 20.1s | 623146 |
 | Upgradability V1 | 3 | 331B | 21.7s | 623154 |
 | Upgradability V2 | 3 | 721B | 20.2s | 623158 |
+| Token Swap | 6 | 645B | 18.6s | 625619 |
 | Token Minting | 3 | 349B | 21.5s | 623162 |
 | Prediction Market | 5 | 523B | 20.1s | 623166 |
 | Staking | 5 | 548B | 21.6s | 623170 |
@@ -80,7 +83,7 @@ Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel
 | Revenue Sharing | 3 | 332B | 18.0s | 624863 |
 | Supply Chain | 4 | 390B | 17.8s | 624866 |
 
-**Total: 14,366B DUST across 29 deployments. Average: ~495B DUST per contract.**
+**Total: 15,011B DUST across 30 deployments. Average: ~500B DUST per contract.**
 
 ### DUST Fee Economics
 
@@ -137,7 +140,7 @@ midnight-skill/
 │   ├── testing.md             # Simulator, standalone, testnet testing
 │   ├── patterns.md            # Design patterns and circuit optimization
 │   ├── stdlib.md              # CompactStandardLibrary reference
-│   ├── gotchas.md             # 52 real-world issues from Discord + compilation
+│   ├── gotchas.md             # 57 real-world issues from Discord + compilation
 │   ├── offchain.md            # TypeScript SDK, wallet, deployment
 │   └── auditing.md            # ZK contract audit methodology
 └── examples/                   # Working examples with tests
@@ -193,7 +196,7 @@ Built from:
 - **Brick Towers** projects — seabattle, local-network, proof-server, RWA
 - **Existing community skills** — UvRoxx, FractionEstate, OverGuild, mzf11125
 - **Compiler validation** — every example compiled and tested against Compact 0.29.0
-- **Preprod deployment** — 29 contracts deployed on Midnight preprod with ZK proofs verified on-chain
+- **Preprod deployment** — 30 contracts deployed on Midnight preprod with ZK proofs verified on-chain
 
 ## Contributing
 
