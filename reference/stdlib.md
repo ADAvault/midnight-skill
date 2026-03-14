@@ -126,34 +126,40 @@ Derive the token type identifier from a domain separator and contract address.
 const ttype = tokenType(pad(32, "myToken"), kernel.self());
 ```
 
-**When to use:** Verifying that a received coin matches the expected token type, or constructing a `QualifiedCoinInfo` for send operations.
+**When to use:** Verifying that a received coin's `.color` matches the expected token type, or for token type comparisons in deposit/send operations.
 
 ---
 
-#### `receive(coin: CoinInfo)`
+#### `receiveShielded(coin: ShieldedCoinInfo)`
 
-Accept an incoming coin into the contract. Must be called inside a circuit to process a coin transfer to this contract.
+Accept an incoming shielded coin into the contract. Must be called inside a circuit to process a coin transfer to this contract. The `coin` parameter is a `ShieldedCoinInfo` struct with fields `nonce` (`Bytes<32>`), `color` (`Bytes<32>`), and `value` (`Uint<128>`).
 
 ```compact
-receive(coin);
+export circuit deposit(coin: ShieldedCoinInfo): [] {
+  receiveShielded(disclose(coin));
+}
 ```
 
-**WARNING:** If a coin is sent to a contract that does not call `receive`, the coin is lost.
+**WARNING:** If a coin is sent to a contract that does not call `receiveShielded`, the coin is lost.
+
+**NOTE:** Previously named `receive()`. Using the old name produces a helpful error: `apparent use of an old standard-library / ledger operator name receive: the new name is receiveShielded`.
 
 ---
 
-#### `sendImmediate(coin: QualifiedCoinInfo, recipient: Either<ZswapCoinPublicKey, ContractAddress>, amount: Uint<64>): SendResult`
+#### `sendImmediateShielded(coin: ShieldedCoinInfo, recipient: Either<ZswapCoinPublicKey, ContractAddress>, amount: Uint<64>): SendResult`
 
-Send a coin from the contract to a recipient.
+Send a shielded coin from the contract to a recipient. The `coin` parameter is a `ShieldedCoinInfo` struct.
 
 ```compact
 const recipient = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
-const result = sendImmediate(coin, recipient, amount);
+sendImmediateShielded(disclose(coin), recipient, disclose(amount));
 ```
 
 **When to use:** Transferring tokens out of the contract to a wallet or another contract.
 
 **WARNING:** The coin must have sufficient balance. Insufficient balance causes the transaction to fail at proof verification.
+
+**NOTE:** Previously named `sendImmediate()`. Using the old name produces a helpful error: `apparent use of an old standard-library / ledger operator name sendImmediate: the new name is sendImmediateShielded`.
 
 ---
 
@@ -399,10 +405,9 @@ const contract = right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
 |------|-------------|
 | `ZswapCoinPublicKey` | Wallet public key for coin operations (unlinkable per-tx) |
 | `ContractAddress` | On-chain contract address |
-| `CoinInfo` | Coin descriptor for receiving shielded tokens |
-| `QualifiedCoinInfo` | Coin descriptor with type info for sending |
+| `ShieldedCoinInfo` | Coin descriptor for shielded token operations (struct: `nonce: Bytes<32>`, `color: Bytes<32>`, `value: Uint<128>`). Replaces old `CoinInfo`/`QualifiedCoinInfo`. |
 | `TokenType` | Token type identifier (derived from domain + contract address) |
-| `SendResult` | Result of a `sendImmediate` call |
+| `SendResult` | Result of a `sendImmediateShielded` call |
 
 ### Custom Types
 

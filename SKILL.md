@@ -336,7 +336,7 @@ For detailed information, consult:
 
 ## Examples
 
-29 examples (27 validated + 2 network-only). 145 circuits compiled, 182/182 tests passing, 29 contracts deployed on preprod:
+29 examples (27 validated + 2 network-only). 151 circuits compiled, 182/182 tests passing, 30 contracts deployed on preprod:
 
 **Core Patterns:**
 - [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.
@@ -367,7 +367,7 @@ For detailed information, consult:
 
 **Advanced:**
 - [Oracle Feed](examples/oracle-feed.md) — 5 circuits, 6/6 tests. External data, freshness checks.
-- [Token Swap](examples/token-swap.md) — Coin operations, requires network validation.
+- [Token Swap](examples/token-swap.md) — 6 circuits. Atomic swap with `receiveShielded`/`sendImmediateShielded`, preprod deployed.
 - [Access Control](examples/access-control.md) — 8 circuits, 6/6 tests. Role hierarchy, internal guards.
 - [DID Registry](examples/did-registry.md) — 5 circuits, 6/6 tests. Document lifecycle (create/update/deactivate).
 - [Micro-DAO](examples/micro-dao.md) — 7 circuits, 7/7 tests. Token-gated voting, treasury, governance.
