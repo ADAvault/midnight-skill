@@ -40,18 +40,19 @@ All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk
 | [Revenue Sharing](examples/revenue-sharing.md) | 3 | 7/7 | Validated |
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 
-**27/29 validated. 145 circuits compiled. 182/182 tests passing. 28 contracts deployed on preprod.**
+**27/29 validated. 145 circuits compiled. 182/182 tests passing. 29 contracts deployed on preprod.**
 
 Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator.
 
 ## Preprod Deployment
 
-28 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
+29 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
 
 | Contract | Circuits | DUST Fee | Deploy Time | Block |
 |----------|----------|----------|-------------|-------|
 | Counter | 3 | 252B | 21.1s | 624936 |
 | Bulletin Board | 2 | 267B | 17.8s | 624939 |
+| Fungible Token | 7 | 560B | 18.6s | 625467 |
 | Rock-Paper-Scissors | 3 | 367B | 18.8s | 623130 |
 | NFT | 7 | 712B | 21.7s | 623134 |
 | Escrow | 3 | 360B | 17.8s | 624942 |
@@ -79,7 +80,7 @@ Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel
 | Revenue Sharing | 3 | 332B | 18.0s | 624863 |
 | Supply Chain | 4 | 390B | 17.8s | 624866 |
 
-**Total: 13,806B DUST across 28 deployments. Average: ~493B DUST per contract.**
+**Total: 14,366B DUST across 29 deployments. Average: ~495B DUST per contract.**
 
 ### DUST Fee Economics
 
@@ -192,7 +193,7 @@ Built from:
 - **Brick Towers** projects — seabattle, local-network, proof-server, RWA
 - **Existing community skills** — UvRoxx, FractionEstate, OverGuild, mzf11125
 - **Compiler validation** — every example compiled and tested against Compact 0.29.0
-- **Preprod deployment** — 28 contracts deployed on Midnight preprod with ZK proofs verified on-chain
+- **Preprod deployment** — 29 contracts deployed on Midnight preprod with ZK proofs verified on-chain
 
 ## Contributing
 
