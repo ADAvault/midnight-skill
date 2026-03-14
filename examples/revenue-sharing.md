@@ -1,6 +1,6 @@
 # Revenue Sharing / Royalties
 
-> **Compiler-validated:** 3 circuits compiled against Compact 0.29.0.
+> **Compiler-validated:** 3 circuits compiled, 7/7 tests passing against Compact 0.29.0.
 
 A revenue-sharing contract where income is automatically split among shareholders
 according to private share percentages. Share allocations are hidden -- only the

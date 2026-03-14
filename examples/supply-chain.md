@@ -1,6 +1,6 @@
 # Supply Chain Provenance
 
-> **Compiler-validated:** 4 circuits compiled against Compact 0.29.0.
+> **Compiler-validated:** 4 circuits compiled, 7/7 tests passing against Compact 0.29.0.
 
 A supply chain tracking contract with selective disclosure. Producers register
 products with private origin data -- supplier identity, geographic location,

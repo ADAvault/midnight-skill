@@ -1,6 +1,6 @@
 # Vesting Schedule
 
-> **Compiler-validated:** 4 circuits compiled against Compact 0.29.0.
+> **Compiler-validated:** 4 circuits compiled, 8/8 tests passing against Compact 0.29.0.
 
 A token vesting contract where tokens unlock in tranches over time. The
 beneficiary can claim unlocked tokens at any point. The vesting amount and
