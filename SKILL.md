@@ -336,7 +336,7 @@ For detailed information, consult:
 
 ## Examples
 
-29 examples (27 validated + 2 network-only). 145 circuits compiled, 182/182 tests passing, 13 contracts deployed on preprod:
+29 examples (27 validated + 2 network-only). 145 circuits compiled, 182/182 tests passing, 28 contracts deployed on preprod:
 
 **Core Patterns:**
 - [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.

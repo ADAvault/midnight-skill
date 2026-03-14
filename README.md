@@ -40,22 +40,33 @@ All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk
 | [Revenue Sharing](examples/revenue-sharing.md) | 3 | 7/7 | Validated |
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 
-**27/29 validated. 145 circuits compiled. 182/182 tests passing. 13 contracts deployed on preprod.**
+**27/29 validated. 145 circuits compiled. 182/182 tests passing. 28 contracts deployed on preprod.**
 
 Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator.
 
 ## Preprod Deployment
 
-13 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
+28 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
 
 | Contract | Circuits | DUST Fee | Deploy Time | Block |
 |----------|----------|----------|-------------|-------|
+| Counter | 3 | 252B | 21.1s | 624936 |
+| Bulletin Board | 2 | 267B | 17.8s | 624939 |
 | Rock-Paper-Scissors | 3 | 367B | 18.8s | 623130 |
 | NFT | 7 | 712B | 21.7s | 623134 |
+| Escrow | 3 | 360B | 17.8s | 624942 |
+| Time Lock | 3 | 363B | 18.9s | 624945 |
+| Multi-Sig | 6 | 574B | 18.3s | 624948 |
+| Identity Proof | 4 | 451B | 17.7s | 624957 |
 | Credential Registry | 5 | 479B | 20.1s | 623138 |
+| Prescription | 5 | 480B | 21.6s | 623150 |
+| Privacy Mixer | 3 | 294B | 21.3s | 624854 |
+| Shielded Voting | 6 | 660B | 19.4s | 624960 |
+| Sealed-Bid Auction | 5 | 554B | 17.7s | 624963 |
+| Oracle Feed | 5 | 504B | 17.2s | 624951 |
+| Access Control | 8 | 931B | 17.8s | 624954 |
 | DID Registry | 5 | 526B | 21.5s | 623142 |
 | Micro-DAO | 7 | 697B | 20.1s | 623146 |
-| Prescription | 5 | 480B | 21.6s | 623150 |
 | Upgradability V1 | 3 | 331B | 21.7s | 623154 |
 | Upgradability V2 | 3 | 721B | 20.2s | 623158 |
 | Token Minting | 3 | 349B | 21.5s | 623162 |
@@ -63,8 +74,12 @@ Token Swap uses Zswap coin operations (`mintShieldedToken`, `tokenType`, `kernel
 | Staking | 5 | 548B | 21.6s | 623170 |
 | Crowdfunding | 5 | 564B | 20.2s | 623174 |
 | Lending | 6 | 629B | 16.2s | 623177 |
+| Lottery | 4 | 485B | 16.9s | 624857 |
+| Vesting | 4 | 418B | 18.9s | 624860 |
+| Revenue Sharing | 3 | 332B | 18.0s | 624863 |
+| Supply Chain | 4 | 390B | 17.8s | 624866 |
 
-**Total: 6,926B DUST across 13 deployments. Average: ~533B DUST per contract.**
+**Total: 13,806B DUST across 28 deployments. Average: ~493B DUST per contract.**
 
 ### DUST Fee Economics
 
