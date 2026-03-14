@@ -879,6 +879,202 @@ compact compile src/contract.compact src/managed/contract
 
 ---
 
+## 12. Contract Monitoring
+
+After deployment, monitor your contracts via the indexer's GraphQL API. This is
+essential for observability in production and debugging on testnet.
+
+### Querying Contract State
+
+```typescript
+const INDEXER = "https://indexer.preprod.midnight.network/api/v3/graphql";
+
+async function getContractState(address: string, blockHeight: number) {
+  const resp = await fetch(INDEXER, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `{
+        contractAction(
+          address: "${address}",
+          offset: { blockOffset: { height: ${blockHeight} } }
+        ) {
+          address
+          state
+          transaction { hash block { height timestamp } }
+        }
+      }`,
+    }),
+  });
+  return resp.json();
+}
+```
+
+### Watching for State Changes
+
+Subscribe to contract actions via the indexer WebSocket:
+
+```typescript
+import { WebSocket } from "ws";
+
+function watchContract(address: string, wsUrl: string) {
+  const ws = new WebSocket(wsUrl, "graphql-ws");
+
+  ws.on("open", () => {
+    ws.send(JSON.stringify({ type: "connection_init" }));
+    ws.send(JSON.stringify({
+      id: "1",
+      type: "start",
+      payload: {
+        query: `subscription {
+          contractStateChanged(contractAddress: "${address}") {
+            state
+            blockHeight
+          }
+        }`,
+      },
+    }));
+  });
+
+  ws.on("message", (data) => {
+    const msg = JSON.parse(data.toString());
+    if (msg.type === "data") {
+      console.log("State changed:", msg.payload.data);
+    }
+  });
+
+  return ws;
+}
+```
+
+### Deployment Verification
+
+After deploying, verify the contract exists on-chain:
+
+```typescript
+async function verifyDeployment(address: string): Promise<boolean> {
+  const resp = await fetch(INDEXER, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      query: `{
+        contractAction(
+          address: "${address}",
+          offset: { blockOffset: { height: 0 } }
+        ) { address }
+      }`,
+    }),
+  });
+  const json = await resp.json();
+  return json.data?.contractAction?.address === address;
+}
+```
+
+### Key Indexer Queries
+
+| Query | Purpose |
+|-------|---------|
+| `block(offset: {height: N})` | Get block by height (transactions, timestamp, author) |
+| `contractAction(address, offset)` | Get contract state at a specific point |
+| `transactions(offset)` | Browse transactions (hash, block, dust events) |
+
+---
+
+## 13. Error Handling & Recovery
+
+Off-chain code must handle failures gracefully. The proof-generate-sign-submit pipeline
+has multiple failure points.
+
+### Transaction Lifecycle Errors
+
+```typescript
+async function safeCircuitCall(
+  contract: DeployedContract,
+  circuitName: string,
+  ...args: any[]
+) {
+  try {
+    const result = await contract.callTx[circuitName](...args);
+    return { success: true, txId: result.txId };
+  } catch (error: any) {
+    const msg = error.message || String(error);
+
+    if (msg.includes("proof") || msg.includes("Proof")) {
+      // Proof generation failed — circuit may be too complex or proof server down
+      return { success: false, stage: "proof", error: msg, retryable: true };
+    }
+
+    if (msg.includes("balance") || msg.includes("DUST") || msg.includes("insufficient")) {
+      // Insufficient DUST for fees — wait for DUST to accrue or top up tNight
+      return { success: false, stage: "balance", error: msg, retryable: true };
+    }
+
+    if (msg.includes("timeout") || msg.includes("ETIMEDOUT")) {
+      // Network timeout — node or indexer may be down
+      return { success: false, stage: "network", error: msg, retryable: true };
+    }
+
+    if (msg.includes("assert") || msg.includes("Circuit")) {
+      // Circuit assertion failed — this is a logic error, not retryable
+      return { success: false, stage: "circuit", error: msg, retryable: false };
+    }
+
+    return { success: false, stage: "unknown", error: msg, retryable: false };
+  }
+}
+```
+
+### Wallet State Desync Recovery
+
+When the wallet falls out of sync with the chain:
+
+```typescript
+async function resyncWallet(wallet: WalletFacade): Promise<void> {
+  // Wait for wallet to catch up to chain head
+  const state = await Rx.firstValueFrom(
+    wallet.state().pipe(
+      Rx.filter((s: any) => s.isSynced),
+      Rx.timeout(300_000), // 5 minutes max
+    ),
+  );
+
+  if (!state.isSynced) {
+    throw new Error("Wallet failed to sync — check indexer connectivity");
+  }
+}
+```
+
+### Proof Server Health Check
+
+```typescript
+async function checkProofServer(url: string): Promise<boolean> {
+  try {
+    const resp = await fetch(`${url}/health`, { signal: AbortSignal.timeout(5000) });
+    return resp.ok;
+  } catch {
+    return false;
+  }
+}
+
+// Use before attempting deployment
+if (!await checkProofServer("http://127.0.0.1:6300")) {
+  throw new Error("Proof server not responding — is it running?");
+}
+```
+
+### Common Failure Patterns
+
+| Symptom | Likely Cause | Recovery |
+|---------|-------------|----------|
+| "context.ctor is not a constructor" | `compact-js` version mismatch between packages | Pin `compact-js` to match `midnight-js-contracts` dependency |
+| `LEVEL_LOCKED` | Two processes accessing same LevelDB directory | Use separate directories or in-memory provider |
+| Proof server timeout | Circuit k-value too high or proof server overloaded | Increase timeout, optimize circuit, or restart proof server |
+| "insufficient DUST" | DUST balance too low for transaction fee | Wait for DUST to accrue from tNight, or request more tNight from faucet |
+| Wallet sync stuck | Indexer behind chain head or WebSocket disconnected | Check indexer health, reconnect WebSocket |
+| Transaction stuck | Block production paused or tx rejected by mempool | Check node peer count, verify tx was accepted |
+
+---
+
 ## Full Working Example: Counter dApp (Node.js CLI)
 
 Putting it all together -- a complete Node.js CLI application that deploys and interacts

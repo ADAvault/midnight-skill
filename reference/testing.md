@@ -874,6 +874,481 @@ it("should deploy contract", async () => {
 
 ---
 
+## 9. Invariant Testing
+
+Invariant tests verify that properties hold across arbitrary sequences of operations.
+Unlike unit tests which check specific scenarios, invariants catch unexpected state
+corruption under random interaction patterns.
+
+### Conservation Laws
+
+The most important invariants for token/financial contracts:
+
+```typescript
+import fc from "fast-check";
+
+describe("Token invariants", () => {
+  it("total supply is conserved across all operations", () => {
+    fc.assert(
+      fc.property(
+        fc.array(
+          fc.record({
+            action: fc.constantFrom("mint", "transfer", "burn"),
+            user: fc.constantFrom("alice", "bob", "carol"),
+            amount: fc.bigInt({ min: 1n, max: 1000n }),
+          }),
+          { minLength: 5, maxLength: 100 },
+        ),
+        (operations) => {
+          const contract = new Contract<PrivateState>(witnesses);
+          const addr = sampleContractAddress();
+          let state = contract.initialState(
+            createConstructorContext(adminPrivateState, addr),
+          );
+
+          let totalMinted = 0n;
+          let totalBurned = 0n;
+
+          for (const op of operations) {
+            const userState = userStates[op.user];
+            const ctx = createCircuitContext(
+              addr, state.currentZswapLocalState,
+              state.currentContractState, userState,
+            );
+
+            try {
+              if (op.action === "mint") {
+                const r = contract.impureCircuits.mint(ctx, op.amount);
+                state = r;
+                totalMinted += op.amount;
+              } else if (op.action === "transfer") {
+                const r = contract.impureCircuits.transfer(ctx, op.amount);
+                state = r;
+                // transfers don't change total supply
+              } else if (op.action === "burn") {
+                const r = contract.impureCircuits.burn(ctx, op.amount);
+                state = r;
+                totalBurned += op.amount;
+              }
+            } catch {
+              // Circuit rejected — state unchanged, invariant still holds
+            }
+          }
+
+          // THE INVARIANT: total supply = minted - burned
+          const readCtx = createCircuitContext(
+            addr, state.currentZswapLocalState,
+            state.currentContractState, adminPrivateState,
+          );
+          const supply = contract.impureCircuits.totalSupply(readCtx);
+          expect(supply.result).toBe(totalMinted - totalBurned);
+        },
+      ),
+    );
+  });
+});
+```
+
+### State Machine Invariants
+
+For contracts with state machines (auction, escrow, game), verify valid transitions:
+
+```typescript
+it("state transitions are monotonic", () => {
+  fc.assert(
+    fc.property(
+      fc.array(fc.constantFrom("bid", "reveal", "finalize", "cancel")),
+      (actions) => {
+        // ... setup ...
+        const stateOrder = { created: 0, bidding: 1, revealing: 2, finalized: 3 };
+        let lastState = 0;
+
+        for (const action of actions) {
+          try {
+            const r = contract.impureCircuits[action](ctx);
+            const currentState = stateOrder[readState(r)];
+            // State should never go backwards
+            expect(currentState).toBeGreaterThanOrEqual(lastState);
+            lastState = currentState;
+          } catch {
+            // Rejected transitions are fine — invariant is about accepted ones
+          }
+        }
+      },
+    ),
+  );
+});
+```
+
+### Key Invariants to Test
+
+| Contract Type | Invariant |
+|--------------|-----------|
+| Token/Coin | Total supply = sum of all balances |
+| Escrow | Locked funds + released funds = deposited funds |
+| Voting | Total votes cast <= number of eligible voters |
+| Auction | Winning bid >= all other bids |
+| Staking | Staked amount + rewards withdrawn <= initial stake + accrued rewards |
+| Access control | Only designated roles can execute privileged circuits |
+| Nullifier-based | Each credential/vote can be used exactly once |
+
+---
+
+## 10. Witness Validation Testing
+
+Witnesses are the primary attack surface — they run unverified on the user's machine.
+Test them in isolation to ensure they correctly transform private state and return
+expected values.
+
+### Unit Testing Witnesses Directly
+
+```typescript
+import { witnesses } from "../src/witnesses";
+import crypto from "node:crypto";
+
+describe("Witness implementations", () => {
+  it("localSecretKey returns the key from private state", () => {
+    const secretKey = crypto.randomBytes(32);
+    const privateState = { secretKey, nonce: 0n };
+
+    const [newState, result] = witnesses.localSecretKey({
+      privateState,
+      ledger: {} as any,
+      contractAddress: "0".repeat(64),
+    });
+
+    // Witness should not mutate private state
+    expect(newState).toEqual(privateState);
+    // Witness should return the actual key
+    expect(result).toEqual(secretKey);
+  });
+
+  it("getAmount respects the max parameter", () => {
+    const privateState = { secretKey: new Uint8Array(32), amount: 500n };
+
+    const [, result] = witnesses.getAmount(
+      { privateState, ledger: {} as any, contractAddress: "0".repeat(64) },
+      1000n, // max parameter from circuit
+    );
+
+    expect(result).toBeLessThanOrEqual(1000n);
+  });
+
+  it("witness preserves private state immutability", () => {
+    const original = { secretKey: crypto.randomBytes(32), counter: 5n };
+    const frozen = Object.freeze({ ...original });
+
+    const [newState] = witnesses.localSecretKey({
+      privateState: frozen,
+      ledger: {} as any,
+      contractAddress: "0".repeat(64),
+    });
+
+    // Private state should be returned unchanged
+    expect(newState.secretKey).toEqual(original.secretKey);
+    expect(newState.counter).toBe(original.counter);
+  });
+});
+```
+
+### Testing Witness Return Type Correctness
+
+```typescript
+it("witness returns correct Compact type mapping", () => {
+  // Bytes<32> must be exactly 32 bytes
+  const [, key] = witnesses.localSecretKey({ privateState, ledger, contractAddress });
+  expect(key).toBeInstanceOf(Uint8Array);
+  expect(key.length).toBe(32);
+
+  // Uint<64> must be a non-negative bigint within range
+  const [, amount] = witnesses.getAmount({ privateState, ledger, contractAddress }, 100n);
+  expect(typeof amount).toBe("bigint");
+  expect(amount).toBeGreaterThanOrEqual(0n);
+  expect(amount).toBeLessThan(2n ** 64n);
+});
+```
+
+### Testing Malicious Witness Behavior
+
+Verify that circuits reject bad witness outputs. This tests the circuit's validation
+logic, not the witness itself:
+
+```typescript
+it("circuit rejects witness returning wrong key", () => {
+  const wrongKeyWitnesses = {
+    ...witnesses,
+    localSecretKey: ({ privateState }: any) => [
+      privateState,
+      new Uint8Array(32).fill(0xff), // attacker returns a fake key
+    ],
+  };
+
+  const contract = new Contract<PrivateState>(wrongKeyWitnesses);
+  const addr = sampleContractAddress();
+  const init = contract.initialState(
+    createConstructorContext(ownerPrivateState, addr),
+  );
+
+  // Circuit should reject because disclosed key doesn't match stored owner
+  const ctx = createCircuitContext(
+    addr, init.currentZswapLocalState,
+    init.currentContractState, attackerPrivateState,
+  );
+  expect(() => contract.impureCircuits.restrictedAction(ctx)).toThrow();
+});
+```
+
+---
+
+## 11. Adversarial Testing
+
+Go beyond error conditions — systematically simulate the attacks described in
+[security.md](security.md).
+
+### Replay Attack Testing
+
+```typescript
+it("prevents replaying a previous valid action", () => {
+  const contract = new Contract<PrivateState>(witnesses);
+  const addr = sampleContractAddress();
+  const init = contract.initialState(createConstructorContext(privateState, addr));
+
+  // First claim succeeds
+  const ctx1 = createCircuitContext(
+    addr, init.currentZswapLocalState,
+    init.currentContractState, init.currentPrivateState,
+  );
+  const r1 = contract.impureCircuits.claim(ctx1);
+
+  // Replaying with same private state + nullifier should fail
+  const ctx2 = createCircuitContext(
+    addr, r1.currentZswapLocalState,
+    r1.currentContractState, init.currentPrivateState, // reuse original state
+  );
+  expect(() => contract.impureCircuits.claim(ctx2)).toThrow();
+});
+```
+
+### Privilege Escalation Testing
+
+```typescript
+it("non-admin cannot execute admin circuits", () => {
+  const users = [
+    { name: "random user", key: crypto.randomBytes(32) },
+    { name: "zero key", key: new Uint8Array(32) },
+    { name: "max key", key: new Uint8Array(32).fill(0xff) },
+  ];
+
+  for (const user of users) {
+    const userWitnesses = {
+      localSecretKey: ({ privateState }: any) => [privateState, user.key],
+    };
+    const contract = new Contract(userWitnesses);
+    const ctx = createCircuitContext(
+      addr, init.currentZswapLocalState,
+      init.currentContractState, { secretKey: user.key },
+    );
+
+    expect(
+      () => contract.impureCircuits.adminAction(ctx),
+      `${user.name} should not have admin access`,
+    ).toThrow();
+  }
+});
+```
+
+### Privacy Leak Verification
+
+```typescript
+it("committed value is not recoverable from ledger state", () => {
+  const secret = crypto.randomBytes(32);
+  const contract = new Contract<PrivateState>(commitWitnesses(secret));
+  const addr = sampleContractAddress();
+  const init = contract.initialState(createConstructorContext({ secret }, addr));
+  const ctx = createCircuitContext(
+    addr, init.currentZswapLocalState,
+    init.currentContractState, init.currentPrivateState,
+  );
+  const r = contract.impureCircuits.commit(ctx);
+
+  // Serialize entire public state
+  const publicState = JSON.stringify(r.currentContractState);
+  const secretHex = Buffer.from(secret).toString("hex");
+
+  // Secret must not appear in public state (even as substring)
+  expect(publicState).not.toContain(secretHex);
+
+  // Verify commitment is present (it's a hash, not the value)
+  expect(publicState.length).toBeGreaterThan(0);
+});
+```
+
+---
+
+## 12. Performance Baselines & Circuit Complexity
+
+### k-Value Targets
+
+The circuit `k` value determines proof generation time and is logged during compilation.
+Track these as part of your test suite:
+
+| k Value | Classification | Proof Time (approx) | Action |
+|---------|---------------|---------------------|--------|
+| k <= 14 | Fast | 2-5 seconds | Acceptable for all circuits |
+| k = 15-16 | Moderate | 10-30 seconds | Acceptable for infrequent operations |
+| k >= 17 | Slow | 30+ seconds | Optimize or split the circuit |
+| k >= 20 | Problematic | Minutes+ | Likely to cause proof server timeouts |
+
+### Tracking Circuit Complexity
+
+After compilation, extract and record k-values:
+
+```bash
+# Compile and capture k-values from output
+compact compile src/contract.compact src/managed/contract 2>&1 | grep -i "circuit\|k ="
+```
+
+### Deployment Cost Reference (preprod, protocol v21000)
+
+Based on 13 contracts deployed to Midnight preprod (March 2026):
+
+| Complexity | DUST Fee | Proof + Confirm Time |
+|------------|----------|---------------------|
+| 3 circuits | 331B-367B | 17-22s |
+| 5 circuits | 479B-564B | 20-22s |
+| 6-7 circuits | 629B-721B | 16-22s |
+
+### Performance Regression Test
+
+```typescript
+describe("Performance baselines", () => {
+  it("deployment completes within timeout", async () => {
+    const start = Date.now();
+    const deployed = await deployContract(providers, deployOptions);
+    const elapsed = Date.now() - start;
+
+    // Fail if deployment takes more than 60 seconds (adjust per contract)
+    expect(elapsed).toBeLessThan(60_000);
+  }, 120_000);
+
+  it("circuit call completes within timeout", async () => {
+    const start = Date.now();
+    await deployed.callTx.increment();
+    const elapsed = Date.now() - start;
+
+    // Simple circuit should complete in under 30 seconds
+    expect(elapsed).toBeLessThan(30_000);
+  }, 60_000);
+});
+```
+
+---
+
+## 13. CI/CD Integration
+
+### Recommended CI Pipeline
+
+```yaml
+# .github/workflows/midnight-test.yml
+name: Midnight Contract Tests
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Compact toolchain
+        run: |
+          curl --proto '=https' --tlsv1.2 -LsSf \
+            https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Compile contracts
+        run: compact compile src/contract.compact src/managed/contract
+
+      - name: Run simulator tests
+        run: npm run test:simulator
+
+      # Optional: network tests on merge to main
+      - name: Start local network
+        if: github.ref == 'refs/heads/main'
+        run: docker compose -f midnight-local-network/docker-compose.yml up -d
+
+      - name: Run network tests
+        if: github.ref == 'refs/heads/main'
+        run: npm run test:network
+```
+
+### What to Run on Every Commit
+
+| Check | Level | Speed | Purpose |
+|-------|-------|-------|---------|
+| `compact compile` | Build | Seconds | Catch syntax/type errors |
+| Simulator tests | L1 | Seconds | Circuit logic correctness |
+| Invariant tests | L1 | Seconds | Conservation laws, state machine validity |
+| Witness unit tests | Unit | Milliseconds | Witness correctness in isolation |
+| Privacy leak tests | L1 | Seconds | No secrets in public state |
+| Version alignment | Lint | Instant | All @midnight-ntwrk packages match |
+
+### What to Run on Merge / Release
+
+| Check | Level | Speed | Purpose |
+|-------|-------|-------|---------|
+| Standalone network deploy | L2 | Minutes | Real proof generation works |
+| Standalone circuit calls | L2 | Minutes | End-to-end transaction flow |
+| Adversarial tests | L1/L2 | Seconds-Minutes | Attack scenarios rejected |
+| k-value regression | Build | Seconds | Circuit complexity hasn't increased |
+
+### Version Alignment Check
+
+Add this as a CI step to catch version mismatches early:
+
+```bash
+#!/bin/bash
+# check-versions.sh — verify all @midnight-ntwrk packages are aligned
+VERSIONS=$(npm ls --json 2>/dev/null | \
+  node -e "const d=require('fs').readFileSync('/dev/stdin','utf8'); \
+  const j=JSON.parse(d); const vs=new Set(); \
+  function walk(deps){for(const[k,v]of Object.entries(deps||{})){ \
+  if(k.startsWith('@midnight-ntwrk'))vs.add(k+'@'+v.version); \
+  walk(v.dependencies)}} walk(j.dependencies); \
+  vs.forEach(v=>console.log(v))")
+echo "$VERSIONS"
+# Check for major version conflicts
+echo "$VERSIONS" | awk -F@ '{print $2"@"$3}' | sort -u
+```
+
+---
+
+## 14. Ecosystem Limitations
+
+The following testing capabilities are available in mature smart contract ecosystems
+(Ethereum/Solidity, Cardano/Aiken) but do not yet exist for Midnight Compact as of
+March 2026:
+
+| Capability | Ethereum Equivalent | Midnight Status |
+|-----------|-------------------|-----------------|
+| Circuit-aware fuzzing | Echidna, Foundry fuzz | Not available. zkFuzz exists for Circom/Noir but not Compact. Use `fast-check` for property-based testing. |
+| Formal verification | Certora, Halmos, K Framework | Not available. No theorem provers or model checkers for Compact circuits. |
+| Automated security analysis | Slither, Mythril | Not available. Use the manual audit methodology in [auditing.md](auditing.md). |
+| Mutation testing | Vertigo, Gambit | Not available. No tools to verify test quality by injecting mutations. |
+| Symbolic execution | Manticore, HEVM | Not available. Circuit constraints cannot be symbolically explored. |
+| Coverage metrics | solidity-coverage | Not available. No way to measure which circuit paths are tested. |
+
+**Mitigations:**
+- Lean heavily on property-based testing with `fast-check` — it provides the closest
+  equivalent to fuzzing within current tooling
+- Use the 6-phase audit methodology for systematic manual review
+- Invest in comprehensive simulator tests — they run fast enough for high iteration
+- Track circuit k-values as a proxy for complexity metrics
+- Test adversarial scenarios explicitly (section 11) since automated detection is unavailable
+
+---
+
 ## Quick Reference: Minimal Working Test
 
 For a counter contract, here is the shortest path to a passing test:

@@ -30,15 +30,27 @@ privacy-preserving computation on the Midnight blockchain.
 
 When asked to write a smart contract:
 
-1. **Identify the privacy requirements**: what must be shielded vs public?
-2. **Design ledger state** — `export ledger` for public, plain `ledger` for contract-private
-3. **Design witnesses** — what private data do users provide off-chain?
-4. **Write circuits** — exported for external calls, plain for internal
-5. **Add `disclose()` calls** — required for any witness-derived value written to ledger or used in conditionals
-6. **Write TypeScript witnesses** — implement witness bodies returning `[newPrivateState, returnValue]`
-7. **Write tests** — simulator first, then standalone network
-8. **Review for privacy leaks** — check the security patterns in [security.md](reference/security.md)
-9. **Compile and deploy** — `compact compile`, test with proof server
+1. **Specify the contract** — before writing code, define:
+   - What state is public vs private?
+   - What operations (circuits) does it expose?
+   - What invariants must hold? (e.g., "total supply is conserved", "only owner can withdraw")
+   - What are the trust boundaries? (what can witnesses lie about?)
+   - What are the failure modes?
+2. **Identify the privacy requirements**: what must be shielded vs public?
+3. **Design ledger state** — `export ledger` for public, plain `ledger` for contract-private
+4. **Design witnesses** — what private data do users provide off-chain?
+5. **Write circuits** — exported for external calls, plain for internal
+6. **Add `disclose()` calls** — required for any witness-derived value written to ledger or used in conditionals
+7. **Write TypeScript witnesses** — implement witness bodies returning `[newPrivateState, returnValue]`
+8. **Write tests** — progressive approach:
+   - Unit test witnesses in isolation (correct types, immutable state, edge cases)
+   - Simulator tests for every circuit (happy path + error conditions)
+   - Invariant tests with `fast-check` (conservation laws, state machine validity)
+   - Privacy leak tests (verify secrets don't appear in public state)
+   - Adversarial tests (replay attacks, privilege escalation, malicious witnesses)
+9. **Review for privacy leaks** — check the security patterns in [security.md](reference/security.md)
+10. **Check circuit complexity** — verify k-values are acceptable (k <= 14 fast, k >= 17 needs optimization)
+11. **Compile and deploy** — `compact compile`, test with proof server, deploy to preprod before mainnet
 
 When asked to audit or review a contract:
 
@@ -243,7 +255,9 @@ npm test                               # run tests (Vitest/Jest)
 
 ## Testing
 
-Always test with the simulator before deploying. See [testing.md](reference/testing.md) for full details.
+Always test with the simulator before deploying. See [testing.md](reference/testing.md) for full details
+including invariant testing, witness validation, adversarial testing, performance baselines,
+and CI/CD integration.
 
 ```typescript
 import { Contract } from "../managed/counter/contract/index.js";
@@ -313,11 +327,11 @@ For detailed information, consult:
 - [Language reference](reference/language.md) — types, syntax, modules, casting, operators
 - [Privacy model](reference/privacy-model.md) — shielded vs unshielded, disclose(), witness pattern, ZK fundamentals
 - [Security patterns](reference/security.md) — ZK-specific attack vectors, privacy leaks, common mistakes
-- [Testing guide](reference/testing.md) — simulator, in-memory providers, standalone network, multi-user
+- [Testing guide](reference/testing.md) — simulator, invariant testing, witness validation, adversarial testing, CI/CD, performance baselines
 - [Design patterns](reference/patterns.md) — circuit optimization, off-chain computation, module composition
 - [Standard library](reference/stdlib.md) — CompactStandardLibrary built-in functions and types
 - [Gotchas](reference/gotchas.md) — 52 compiler bugs, SDK pitfalls, design traps (Discord + real compilation)
-- [Off-chain integration](reference/offchain.md) — TypeScript SDK, wallet integration, provider pattern, deployment
+- [Off-chain integration](reference/offchain.md) — TypeScript SDK, wallet, deployment, contract monitoring, error handling
 - [Auditing methodology](reference/auditing.md) — ZK contract audit process, privacy leak detection
 
 ## Examples
