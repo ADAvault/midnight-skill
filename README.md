@@ -207,9 +207,10 @@ PRs welcome — especially from Midnight developers, ZK researchers, and privacy
 - Corrections to existing reference material
 - Off-chain integration patterns for new SDK versions
 
-## Companion Skill
+## Companion Skills
 
-See also: [cardano-skill](https://github.com/ADAvault/cardano-skill) — the equivalent skill for Aiken smart contracts on Cardano (eUTxO, multi-validator, CIP-113).
+- [cardano-skill](https://github.com/ADAvault/cardano-skill) — Aiken smart contracts on Cardano (eUTxO, multi-validator, CIP-113)
+- [cardano-offchain-skill](https://github.com/ADAvault/cardano-offchain-skill) — CIP-30 wallets, MeshJS transactions, Ogmios/Kupo, Playwright testing
 
 ## License
 
