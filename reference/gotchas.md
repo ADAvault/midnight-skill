@@ -901,6 +901,28 @@ potential witness-value disclosure must be declared but is not
 
 Fix: Restructure to avoid `||` with witness values. Use separate assertions or remove the auth check where it's not security-critical.
 
+### 58. `Counter.read() as Field as Bytes<32>` byte representation mismatch
+
+`Counter.read()` returns a Field value. Casting `Field as Bytes<32>` produces the Field's internal byte representation (prime field element encoding), which does NOT match a naive `Uint8Array` construction in TypeScript.
+
+```typescript
+// TypeScript: manual byte construction
+const seq = new Uint8Array(32);
+seq[0] = 1;  // This is NOT the same as 1 as Field as Bytes<32>
+
+// Using this in pureCircuits.myHash(sk, seq) will NOT match
+// the in-circuit myHash(sk, counter.read() as Field as Bytes<32>)
+```
+
+If you pre-compute a hash off-chain using `pureCircuits.myFunction(sk, manualBytes)` and compare it against an in-circuit computation using `myFunction(sk, counter.read() as Field as Bytes<32>)`, the hashes will NOT match.
+
+**Fix:** Either:
+- Avoid using Counter values in hash inputs that need off-chain reproduction
+- For per-contract-deployment patterns, skip the sequence counter in key derivation — the state machine prevents replays
+- If you must use Counter in hashes, compute BOTH the storage AND the verification in-circuit (never pre-compute off-chain)
+
+Discovered during LOKx LOK contract development (March 2026).
+
 ---
 
 ## Version Compatibility
