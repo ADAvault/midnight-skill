@@ -901,6 +901,41 @@ potential witness-value disclosure must be declared but is not
 
 Fix: Restructure to avoid `||` with witness values. Use separate assertions or remove the auth check where it's not security-critical.
 
+### 59. `transferTransaction` requires explicit `signRecipe` before submission
+
+`WalletFacade.transferTransaction()` returns an `UnprovenTransactionRecipe` that is NOT signed. Calling `finalizeRecipe()` + `submitTransaction()` without signing produces **"Custom error: 139"** — the ledger rejects the unsigned transaction.
+
+```typescript
+// WRONG — error 139
+const recipe = await wallet.transferTransaction([...], keys, { ttl });
+const finalized = await wallet.finalizeRecipe(recipe);
+await wallet.submitTransaction(finalized); // Custom error: 139
+
+// CORRECT — sign before finalizing
+const recipe = await wallet.transferTransaction([...], keys, { ttl });
+const signed = await wallet.signRecipe(recipe, (payload) => keystore.signData(payload));
+const finalized = await wallet.finalizeRecipe(signed);
+await wallet.submitTransaction(finalized); // OK
+```
+
+This is surprising because contract deployments via `deployContract()` work without explicit signing — the SDK handles it internally via `balanceUnboundTransaction`. But `transferTransaction` uses a different code path (`UnprovenTransactionRecipe`) that requires the caller to sign explicitly.
+
+The `transferTransaction` call takes `CombinedTokenTransfer[]`:
+
+```typescript
+const recipe = await wallet.transferTransaction(
+  [{ type: "unshielded", outputs: [{ type: unshieldedToken().raw, receiverAddress: "mn_addr_preprod1...", amount: 100_000_000n }] }],
+  { shieldedSecretKeys, dustSecretKey },
+  { ttl: new Date(Date.now() + 30 * 60 * 1000), payFees: true },
+);
+```
+
+**Error 138** (from `registerNightUtxosForDustGeneration`) means "already registered" — if your wallet generates DUST, registration is already done.
+
+Discovered during LOKx tNight transfer on preprod (March 2026).
+
+---
+
 ### 58. `Counter.read() as Field as Bytes<32>` byte representation mismatch
 
 `Counter.read()` returns a Field value. Casting `Field as Bytes<32>` produces the Field's internal byte representation (prime field element encoding), which does NOT match a naive `Uint8Array` construction in TypeScript.
