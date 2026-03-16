@@ -1091,6 +1091,12 @@ The `time` parameter is in **seconds since Unix epoch** (Uint<64>).
 
 **Simulator limitation:** `blockTimeGt/Gte/Lt/Lte` are not enforced in the `compact-runtime` simulator — they pass through without validation. Time enforcement only works on-chain. Test time-dependent logic on preprod, not in the simulator.
 
+**On-chain enforcement confirmed (March 2026):** `assert(blockTimeGte(futureTime))` rejects the transaction with "failed assert: Too early". The ZK proof fails to validate against the block producer's timestamp. Ledger state is NOT updated on rejection (transaction atomicity preserved). `blockTimeGte(pastTime)` succeeds and updates state normally.
+
+**Key behaviour:** `blockTimeGte` returns `Boolean`, not void. Used standalone, it returns true/false without rejecting. Wrap in `assert()` to enforce: `assert(blockTimeGte(unlockTime), "Too early")`.
+
+**DUST cost:** Both successful and failed `callTx` cost DUST (~400-500B). Failed assertions consume the proof generation cost but do not update ledger state.
+
 **Use instead of witness-based time:** For any time-gated operation (locks, deadlines, vesting), prefer `blockTimeGte` over a `getCurrentTime()` witness. The witness approach lets callers lie about the time; `blockTimeGte` cannot be spoofed.
 
 Discovered via midnight-mcp search (March 2026). Working examples in `compact-export/test-center/compact/block-time.compact`.
