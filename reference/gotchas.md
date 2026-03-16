@@ -1021,7 +1021,42 @@ const signed = await wallet.signRecipe(recipe, signFn);  // Required (gotcha #59
 
 This blocks shielded token operations for wallets that only hold unshielded tNight. May be a preprod limitation — needs investigation with the Midnight team.
 
-**LOKx impact:** Contracts using `receiveShielded` need shielded inputs. If shield conversion doesn't work, the contract design may need to accept unshielded tokens instead.
+**LOKx impact:** Contracts using `receiveShielded` need shielded inputs. If shield conversion doesn't work, the contract design should use unshielded operations instead (see gotcha #64).
+
+### 64. Use `receiveUnshielded` / `sendUnshielded` for tNight operations
+
+Compact provides **unshielded coin operations** that work with tNight (the token users actually hold). These are simpler than shielded operations — no `ShieldedCoinInfo` parameter needed, no coin descriptor tracking.
+
+```compact
+// Accept unshielded tokens into contract
+receiveUnshielded(disclose(color), disclose(amount));
+
+// Send unshielded tokens to a user address
+sendUnshielded(color, amount, right<ContractAddress, UserAddress>(disclose(recipientAddr)));
+
+// Send to another contract
+sendUnshielded(color, amount, left<ContractAddress, UserAddress>(kernel.self()));
+
+// Mint new unshielded tokens
+mintUnshieldedToken(domainSep, value, right<ContractAddress, UserAddress>(disclose(recipient)));
+
+// Check contract's unshielded balance
+const bal = unshieldedBalance(color);
+```
+
+| | Shielded | Unshielded |
+|---|---|---|
+| Receive | `receiveShielded(coin: ShieldedCoinInfo)` | `receiveUnshielded(color: Bytes<32>, amount: Uint<128>)` |
+| Send | `sendImmediateShielded(coin, recipient, amount)` | `sendUnshielded(color, amount, recipient)` |
+| Recipient | `Either<ZswapCoinPublicKey, ContractAddress>` | `Either<ContractAddress, UserAddress>` |
+| Balance check | N/A | `unshieldedBalance(color)` |
+| Amount privacy | Hidden | Visible on-chain |
+
+**When to use which:** Use unshielded for v0.1/PoC work where users hold tNight. Use shielded when privacy of amounts matters and users have shielded tokens (via minting or receiving).
+
+**No `ownUserAddress()` built-in** — unlike `ownPublicKey()` for shielded, there's no way to get the caller's UserAddress inside a circuit. The caller must pass their `UserAddress` as a circuit parameter.
+
+Discovered via midnight-mcp search across Midnight repos (March 2026).
 
 ---
 
