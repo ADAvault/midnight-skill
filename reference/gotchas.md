@@ -1058,6 +1058,36 @@ const bal = unshieldedBalance(color);
 
 Discovered via midnight-mcp search across Midnight repos (March 2026).
 
+### 65. `blockTimeGte` / `blockTimeLt` — protocol-enforced time checks
+
+Compact provides protocol-enforced block time comparison functions. Unlike witness-based `getCurrentTime()`, these are validated by the **block producer** against the actual block timestamp — the caller cannot spoof them.
+
+```compact
+// Protocol-enforced: block producer validates against actual block time
+assert(blockTimeGte(disclose(unlockTime)), "Not yet unlocked");
+assert(blockTimeLt(disclose(deadline)), "Deadline passed");
+
+// Returns Boolean — can be used in if/else too
+if (blockTimeGt(disclose(someTime))) {
+  // time has passed
+}
+```
+
+| Function | Returns | Meaning |
+|----------|---------|---------|
+| `blockTimeLt(time: Uint<64>)` | `Boolean` | Block time < time |
+| `blockTimeLte(time: Uint<64>)` | `Boolean` | Block time <= time |
+| `blockTimeGt(time: Uint<64>)` | `Boolean` | Block time > time |
+| `blockTimeGte(time: Uint<64>)` | `Boolean` | Block time >= time |
+
+The `time` parameter is in **seconds since Unix epoch** (Uint<64>).
+
+**Simulator limitation:** `blockTimeGt/Gte/Lt/Lte` are not enforced in the `compact-runtime` simulator — they pass through without validation. Time enforcement only works on-chain. Test time-dependent logic on preprod, not in the simulator.
+
+**Use instead of witness-based time:** For any time-gated operation (locks, deadlines, vesting), prefer `blockTimeGte` over a `getCurrentTime()` witness. The witness approach lets callers lie about the time; `blockTimeGte` cannot be spoofed.
+
+Discovered via midnight-mcp search (March 2026). Working examples in `compact-export/test-center/compact/block-time.compact`.
+
 ---
 
 ## Version Compatibility
