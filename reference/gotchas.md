@@ -1153,6 +1153,41 @@ export ledger token: P_TokenContract;
 
 This allows one contract to reference another's type at the ledger level. Cross-contract interaction is still commitment-based, not direct calls.
 
+### 69. Wallet → contract token transfers not yet implemented in SDK (March 2026)
+
+**This is the most significant ecosystem limitation.** As of midnight-js v3.2.0 and wallet-sdk v2.0.0 (both March 2026), the SDK does not support transferring tokens from a wallet into a contract via `receiveUnshielded` or `receiveShielded`.
+
+Midnight's own test suite confirms this:
+
+```
+test.skip('should receive tokens from wallet')     // unshielded — skipped
+test.todo('should transfer night from wallet to contract')  // unshielded — not implemented
+// receiveShielded from wallet — no test exists
+```
+
+**What works:**
+
+| Operation | Status | Notes |
+|-----------|--------|-------|
+| Contract → wallet (unshielded) | `test.skip` | `sendUnshielded` partially working |
+| Contract → wallet (shielded) | Works | `sendImmediateShielded` validated |
+| Wallet → wallet (unshielded) | Works | Requires `signRecipe` (gotcha #59) |
+| Wallet → wallet (shielded) | Works | If user has shielded tokens |
+| Contract self-mint + receive | Works | `mintUnshieldedToken` + `receiveUnshielded` in same circuit |
+| **Wallet → contract (unshielded)** | **Not implemented** | `receiveUnshielded` compiles but SDK can't build the TX |
+| **Wallet → contract (shielded)** | **Not implemented** | `receiveShielded` compiles but no SDK path exists |
+
+**Impact:** Any contract that accepts tokens from users (`receiveUnshielded` or `receiveShielded`) will compile and pass simulator tests, but **will fail on-chain with error 139** because the SDK's transaction builder doesn't include wallet UTxOs as inputs when calling contract circuits.
+
+**Workarounds:**
+- Contracts can mint their own tokens (`mintUnshieldedToken` / `mintShieldedToken`) and manage them internally
+- Contract-to-wallet sends work (`sendUnshielded` / `sendImmediateShielded`)
+- API-layer custody: the API holds tokens and tracks lock state in a database, calling the contract for ZK condition verification only
+
+**For contract developers:** Your `receiveUnshielded`/`receiveShielded` code is correct. The limitation is in the off-chain SDK, not the Compact language or the on-chain runtime. When Midnight implements wallet→contract transfers, your contracts will work without changes.
+
+Confirmed against midnight-js v3.2.0 (2026-03-11) and wallet-sdk v2.0.0 (2026-03-10). Verified via midnight-mcp search across all Midnight repos.
+
 ---
 
 ## Version Compatibility
