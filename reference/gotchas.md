@@ -1090,6 +1090,71 @@ Discovered via midnight-mcp search (March 2026). Working examples in `compact-ex
 
 ---
 
+### 66. `sealed ledger` — private ledger fields
+
+The `sealed` keyword makes a ledger field private — only the contract can read/write it, and the value is not visible on-chain.
+
+```compact
+export sealed ledger secretConfig: Bytes<32>;    // private, only contract sees it
+export ledger publicCounter: Counter;             // public, anyone can read via indexer
+```
+
+`sealed` fields are encrypted in the contract state. Use for sensitive configuration that should be set once and never exposed. Seen in the Midnames DID contract (`midnames/core`).
+
+**Note:** `sealed` + `export` means the field exists in the contract's type signature (the SDK knows about it) but the value is private on-chain.
+
+### 67. `MerkleTree` and `HistoricMerkleTree` ledger types
+
+Compact supports Merkle trees as native ledger types with built-in proof verification.
+
+```compact
+ledger commitments: MerkleTree<10, Bytes<32>>;           // depth 10, Bytes<32> values
+ledger history: HistoricMerkleTree<32, Bytes<32>>;       // preserves past roots
+
+// Insert
+commitments.insertHash(hash);
+commitments.insertIndex(value, index);
+
+// Verify proof path
+const digest = merkleTreePathRoot<10, Bytes<32>>(path);
+assert(commitments.checkRoot(digest), "Invalid proof");
+```
+
+`HistoricMerkleTree` preserves previous roots so old proofs remain valid after new insertions. The `MerkleTreePath` type is used as a circuit parameter for proof verification.
+
+Useful for scalable membership proofs, commitment schemes, and privacy-preserving registries.
+
+### 68. Cross-contract calls via `kernel.claimContractCall`
+
+Compact supports composable cross-contract interaction via kernel claims:
+
+```compact
+// Claim a call to another contract's circuit
+kernel.claimContractCall(contractAddr, entryPointHash, transientCommitment);
+
+// The called contract must independently verify the claim
+// This is NOT a direct function call — it's a commitment-based protocol
+```
+
+The pattern uses `transientCommit` to create a commitment to data that the called contract can verify. Both contracts must be in the same transaction for the claim to be validated.
+
+**Contract type declarations in modules:**
+
+```compact
+module Protocol {
+  contract TokenContract {
+    circuit transfer(to: UserAddress, amount: Uint<128>): [];
+  }
+}
+
+import Protocol prefix P_;
+export ledger token: P_TokenContract;
+```
+
+This allows one contract to reference another's type at the ledger level. Cross-contract interaction is still commitment-based, not direct calls.
+
+---
+
 ## Version Compatibility
 
 > **WARNING:** Midnight is pre-mainnet software. APIs, syntax, and tooling
