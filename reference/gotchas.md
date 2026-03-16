@@ -958,6 +958,71 @@ If you pre-compute a hash off-chain using `pureCircuits.myFunction(sk, manualByt
 
 Discovered during LOKx LOK contract development (March 2026).
 
+### 60. No balance-by-address query in the Midnight indexer
+
+The Midnight preprod indexer GraphQL schema has no query for checking an address's token balance. The only way to check balances is through a full wallet SDK sync:
+
+```typescript
+const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter(s => s.isSynced)));
+const tNight = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
+const dust = state.dust.walletBalance(new Date());
+```
+
+This means you cannot check a third party's balance without their secret key. API designs that need balance checks must use the wallet SDK, not the indexer.
+
+### 61. Shielded addresses use different bech32m format from unshielded
+
+| Type | Format | Prefix | Data |
+|------|--------|--------|------|
+| Unshielded | `mn_addr_preprod1...` | `addr` | 32-byte address |
+| Shielded | `mn_shield-addr_preprod1...` | `shield-addr` | 64-byte coinPk + encPk |
+
+Construct a shielded address:
+
+```typescript
+import { ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey, MidnightBech32m } from "@midnight-ntwrk/wallet-sdk-address-format";
+
+const coinPkHex = state.shielded.state.publicKeys.coinPublicKey;  // hex string
+const encPkHex = state.shielded.state.publicKeys.encryptionPublicKey;
+
+const shAddr = new ShieldedAddress(
+  new ShieldedCoinPublicKey(Buffer.from(coinPkHex, "hex")),
+  new ShieldedEncryptionPublicKey(Buffer.from(encPkHex, "hex"))
+);
+const addrStr = MidnightBech32m.encode("preprod", shAddr).asString();
+```
+
+Note: `ShieldedAddress.toString()` returns `[object Object]` — use `.asString()` on the `MidnightBech32m` result, not `toString()` on the `ShieldedAddress` itself.
+
+### 62. Multi-output unshielded transfers work
+
+Multiple recipients in a single transaction:
+
+```typescript
+const recipe = await wallet.transferTransaction(
+  [{
+    type: "unshielded",
+    outputs: [
+      { type: unshieldedToken().raw, receiverAddress: addr1, amount: 1_000_000n },
+      { type: unshieldedToken().raw, receiverAddress: addr2, amount: 1_000_000n },
+    ],
+  }],
+  { shieldedSecretKeys, dustSecretKey },
+  { ttl, payFees: true },
+);
+const signed = await wallet.signRecipe(recipe, signFn);  // Required (gotcha #59)
+```
+
+### 63. `initSwap` for shield conversion fails on preprod (error 138/109)
+
+`wallet.initSwap()` for converting unshielded tNight to shielded tokens builds the recipe but submission fails:
+- Error 138 without `payFees`
+- Error 109 with `payFees: true`
+
+This blocks shielded token operations for wallets that only hold unshielded tNight. May be a preprod limitation — needs investigation with the Midnight team.
+
+**LOKx impact:** Contracts using `receiveShielded` need shielded inputs. If shield conversion doesn't work, the contract design may need to accept unshielded tokens instead.
+
 ---
 
 ## Version Compatibility
