@@ -397,6 +397,11 @@ can fail after 3 attempts with no recovery.
 - Retry with a more stable network connection
 - Host parameters locally and point the proof server at your mirror
 
+**Corporate proxies:** The Compact compiler also downloads ZK parameters from AWS S3 on first compile. Corporate proxies or firewalls may block these downloads. If `compact compile` fails with "Failed to fetch data from ...s3.eu-west-1.amazonaws.com... after 3 attempts":
+- Ensure the proxy allows `*.amazonaws.com` on port 443
+- Or bypass the proxy for the compile step: `unset http_proxy https_proxy && compact compile ...`
+- Or use the [Brick Towers pre-baked proof server](https://github.com/bricktowers/midnight-proof-server) which includes parameters
+
 ### 25. "Failed direct assertion" in proof server
 
 Stack trace through `midnight_base_crypto::proofs::ir_vm` means a Compact
@@ -539,17 +544,17 @@ witnesses: {
 }
 ```
 
-> **NOTE:** Newer versions of the SDK provide a `blockTimeGreaterThan`
-> ledger ADT for time-based conditions. Check if your version supports it
-> before rolling your own witness-based time solution.
+> **NOTE:** Newer versions of the SDK provide `blockTimeGte`/`blockTimeLt`
+> (see gotcha #65) for protocol-enforced time-based conditions. Prefer these
+> over a witness-based time solution — they cannot be spoofed by callers.
 
-### 34. No cross-contract calls
+### 34. No direct cross-contract function calls
 
-A deployed Compact contract cannot call another deployed contract. Each
-contract is isolated.
+A deployed Compact contract cannot directly call functions on another deployed contract. Each
+contract is isolated at the function-call level.
 
-> **NOTE:** This feature is in development and may arrive before or after
-> mainnet. Until then, orchestrate multi-contract interactions off-chain
+> **NOTE:** For commitment-based cross-contract interaction, see gotcha #68 (`kernel.claimContractCall`).
+> Until direct calls are supported, orchestrate multi-contract interactions off-chain
 > by composing transactions in TypeScript that interact with multiple
 > contracts sequentially.
 
@@ -628,15 +633,7 @@ The generated `ledger()` function needs the original `ContractState` (from `init
 not the `QueryContext` (from `result.context.currentQueryContext`). Use `read` circuits
 for checking ledger values in simulator tests.
 
-### 40. BLS parameter download may fail behind corporate proxies
-
-The Compact compiler downloads ZK parameters from AWS S3 on first compile. Corporate
-proxies or firewalls may block these downloads. If `compact compile` fails with
-"Failed to fetch data from ...s3.eu-west-1.amazonaws.com... after 3 attempts":
-
-- Ensure the proxy allows `*.amazonaws.com` on port 443
-- Or bypass the proxy for the compile step: `unset http_proxy https_proxy && compact compile ...`
-- Or use the [Brick Towers pre-baked proof server](https://github.com/bricktowers/midnight-proof-server) which includes parameters
+### 40. *(Merged into #24)*
 
 ### 41. `Opaque<"string">` values cannot be constructed in-circuit
 
@@ -901,6 +898,28 @@ potential witness-value disclosure must be declared but is not
 
 Fix: Restructure to avoid `||` with witness values. Use separate assertions or remove the auth check where it's not security-critical.
 
+### 58. `Counter.read() as Field as Bytes<32>` byte representation mismatch
+
+`Counter.read()` returns a Field value. Casting `Field as Bytes<32>` produces the Field's internal byte representation (prime field element encoding), which does NOT match a naive `Uint8Array` construction in TypeScript.
+
+```typescript
+// TypeScript: manual byte construction
+const seq = new Uint8Array(32);
+seq[0] = 1;  // This is NOT the same as 1 as Field as Bytes<32>
+
+// Using this in pureCircuits.myHash(sk, seq) will NOT match
+// the in-circuit myHash(sk, counter.read() as Field as Bytes<32>)
+```
+
+If you pre-compute a hash off-chain using `pureCircuits.myFunction(sk, manualBytes)` and compare it against an in-circuit computation using `myFunction(sk, counter.read() as Field as Bytes<32>)`, the hashes will NOT match.
+
+**Fix:** Either:
+- Avoid using Counter values in hash inputs that need off-chain reproduction
+- For per-contract-deployment patterns, skip the sequence counter in key derivation — the state machine prevents replays
+- If you must use Counter in hashes, compute BOTH the storage AND the verification in-circuit (never pre-compute off-chain)
+
+Discovered during LOKx LOK contract development (March 2026).
+
 ### 59. `transferTransaction` requires explicit `signRecipe` before submission
 
 `WalletFacade.transferTransaction()` returns an `UnprovenTransactionRecipe` that is NOT signed. Calling `finalizeRecipe()` + `submitTransaction()` without signing produces **"Custom error: 139"** — the ledger rejects the unsigned transaction.
@@ -933,30 +952,6 @@ const recipe = await wallet.transferTransaction(
 **Error 138** (from `registerNightUtxosForDustGeneration`) means "already registered" — if your wallet generates DUST, registration is already done.
 
 Discovered during LOKx tNight transfer on preprod (March 2026).
-
----
-
-### 58. `Counter.read() as Field as Bytes<32>` byte representation mismatch
-
-`Counter.read()` returns a Field value. Casting `Field as Bytes<32>` produces the Field's internal byte representation (prime field element encoding), which does NOT match a naive `Uint8Array` construction in TypeScript.
-
-```typescript
-// TypeScript: manual byte construction
-const seq = new Uint8Array(32);
-seq[0] = 1;  // This is NOT the same as 1 as Field as Bytes<32>
-
-// Using this in pureCircuits.myHash(sk, seq) will NOT match
-// the in-circuit myHash(sk, counter.read() as Field as Bytes<32>)
-```
-
-If you pre-compute a hash off-chain using `pureCircuits.myFunction(sk, manualBytes)` and compare it against an in-circuit computation using `myFunction(sk, counter.read() as Field as Bytes<32>)`, the hashes will NOT match.
-
-**Fix:** Either:
-- Avoid using Counter values in hash inputs that need off-chain reproduction
-- For per-contract-deployment patterns, skip the sequence counter in key derivation — the state machine prevents replays
-- If you must use Counter in hashes, compute BOTH the storage AND the verification in-circuit (never pre-compute off-chain)
-
-Discovered during LOKx LOK contract development (March 2026).
 
 ### 60. No balance-by-address query in the Midnight indexer
 
@@ -1169,11 +1164,11 @@ test.todo('should transfer night from wallet to contract')  // unshielded — no
 
 | Operation | Status | Notes |
 |-----------|--------|-------|
-| Contract → wallet (unshielded) | `test.skip` | `sendUnshielded` partially working |
+| Contract → wallet (unshielded) | **Works** | Confirmed on-chain (gotcha #73) |
 | Contract → wallet (shielded) | Works | `sendImmediateShielded` validated |
 | Wallet → wallet (unshielded) | Works | Requires `signRecipe` (gotcha #59) |
 | Wallet → wallet (shielded) | Works | If user has shielded tokens |
-| Contract self-mint + receive | Works | `mintUnshieldedToken` + `receiveUnshielded` in same circuit |
+| Contract self-mint + receive | **Fails via callTx** | SDK wallet balancer intercepts (gotcha #72) |
 | **Wallet → contract (unshielded)** | **Not implemented** | `receiveUnshielded` compiles but SDK can't build the TX |
 | **Wallet → contract (shielded)** | **Not implemented** | `receiveShielded` compiles but no SDK path exists |
 
@@ -1187,6 +1182,69 @@ test.todo('should transfer night from wallet to contract')  // unshielded — no
 **For contract developers:** Your `receiveUnshielded`/`receiveShielded` code is correct. The limitation is in the off-chain SDK, not the Compact language or the on-chain runtime. When Midnight implements wallet→contract transfers, your contracts will work without changes.
 
 Confirmed against midnight-js v3.2.0 (2026-03-11) and wallet-sdk v2.0.0 (2026-03-10). Verified via midnight-mcp search across all Midnight repos.
+
+### 70. `callTx` works for non-token circuits, `callQry` does not exist on deployed contracts
+
+Post-deployment circuit calls via `deployed.callTx.circuitName()` work on-chain for circuits that don't involve token operations. Each call generates a ZK proof and submits a transaction (~20s).
+
+However, `deployed.callQry` does not exist — off-chain queries must use the indexer directly:
+
+```typescript
+// ON-CHAIN call (works, costs DUST, ~20s)
+const result = await deployed.callTx.queryState();
+console.log(result.private?.result); // circuit return value
+
+// OFF-CHAIN state read (works, free, instant)
+const contractState = await providers.publicDataProvider.queryContractState(contractAddress);
+const ledgerState = mod.ledger(contractState.data);
+console.log(ledgerState.state); // read any public ledger field
+```
+
+### 71. `mintUnshieldedToken` to UserAddress delivers tokens to wallet
+
+Minting custom unshielded tokens directly to a user's wallet works on-chain:
+
+```compact
+export circuit mintToUser(domainSep: Bytes<32>, amount: Uint<64>, recipient: UserAddress): Bytes<32> {
+  return mintUnshieldedToken(disclose(domainSep), disclose(amount), right<ContractAddress, UserAddress>(disclose(recipient)));
+}
+```
+
+The recipient's wallet shows the new token type in `state.unshielded.balances[tokenColor]` alongside tNight. Each contract+domain combination produces a unique token color.
+
+TypeScript: pass UserAddress as `{ bytes: Buffer.from(addressHex, "hex") }`.
+
+### 72. `receiveUnshielded` fails via `callTx` even for self-minted tokens
+
+`receiveUnshielded` in a circuit called via `callTx` triggers "Insufficient funds" — even when the tokens were minted to the contract in the same circuit. The wallet SDK's transaction balancer sees the `receiveUnshielded` claim and tries to satisfy it from wallet UTxOs, which don't have the custom token.
+
+```compact
+// This FAILS on-chain via callTx (Insufficient funds)
+export circuit mintAndReceive(domainSep: Bytes<32>, amount: Uint<64>): Bytes<32> {
+  const color = mintUnshieldedToken(domainSep, amount, left<ContractAddress, UserAddress>(kernel.self()));
+  receiveUnshielded(color, amount as Uint<128>);  // SDK tries to balance from wallet
+  return color;
+}
+
+// This WORKS — mint directly to user instead
+export circuit mintToUser(domainSep: Bytes<32>, amount: Uint<64>, recipient: UserAddress): Bytes<32> {
+  return mintUnshieldedToken(domainSep, amount, right<ContractAddress, UserAddress>(disclose(recipient)));
+}
+```
+
+This is related to gotcha #69 (wallet→contract transfers not implemented). The `receiveUnshielded` claim always triggers wallet-side balancing regardless of where the tokens originate.
+
+### 73. `sendUnshielded` from contract to wallet works on-chain
+
+Contracts can send unshielded tokens to user wallets via `callTx`:
+
+```compact
+export circuit sendToUser(color: Bytes<32>, amount: Uint<128>, recipient: UserAddress): [] {
+  sendUnshielded(disclose(color), disclose(amount), right<ContractAddress, UserAddress>(disclose(recipient)));
+}
+```
+
+This confirms the outbound token path works. Combined with `mintUnshieldedToken` (gotcha #71), contracts can create and distribute tokens. Only the inbound path (wallet→contract) remains blocked (gotcha #69).
 
 ---
 
