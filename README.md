@@ -140,7 +140,7 @@ midnight-skill/
 │   ├── testing.md             # Simulator, standalone, testnet testing
 │   ├── patterns.md            # Design patterns and circuit optimization
 │   ├── stdlib.md              # CompactStandardLibrary reference
-│   ├── gotchas.md             # 69 real-world issues from Discord + compilation
+│   ├── gotchas.md             # 73 real-world issues from Discord + compilation
 │   ├── offchain.md            # TypeScript SDK, wallet, deployment
 │   └── auditing.md            # ZK contract audit methodology
 └── examples/                   # Working examples with tests
