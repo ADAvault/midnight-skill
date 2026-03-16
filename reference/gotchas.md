@@ -898,6 +898,10 @@ potential witness-value disclosure must be declared but is not
 
 Fix: Restructure to avoid `||` with witness values. Use separate assertions or remove the auth check where it's not security-critical.
 
+---
+
+## Type System & Circuit Gotchas
+
 ### 58. `Counter.read() as Field as Bytes<32>` byte representation mismatch
 
 `Counter.read()` returns a Field value. Casting `Field as Bytes<32>` produces the Field's internal byte representation (prime field element encoding), which does NOT match a naive `Uint8Array` construction in TypeScript.
@@ -919,6 +923,10 @@ If you pre-compute a hash off-chain using `pureCircuits.myFunction(sk, manualByt
 - If you must use Counter in hashes, compute BOTH the storage AND the verification in-circuit (never pre-compute off-chain)
 
 Discovered during LOKx LOK contract development (March 2026).
+
+---
+
+## Wallet & Transfer Gotchas
 
 ### 59. `transferTransaction` requires explicit `signRecipe` before submission
 
@@ -1018,6 +1026,10 @@ This blocks shielded token operations for wallets that only hold unshielded tNig
 
 **LOKx impact:** Contracts using `receiveShielded` need shielded inputs. If shield conversion doesn't work, the contract design should use unshielded operations instead (see gotcha #64).
 
+---
+
+## Token Operation Gotchas
+
 ### 64. Use `receiveUnshielded` / `sendUnshielded` for tNight operations
 
 Compact provides **unshielded coin operations** that work with tNight (the token users actually hold). These are simpler than shielded operations — no `ShieldedCoinInfo` parameter needed, no coin descriptor tracking.
@@ -1085,6 +1097,10 @@ Discovered via midnight-mcp search (March 2026). Working examples in `compact-ex
 
 ---
 
+---
+
+## Advanced Compact Features
+
 ### 66. `sealed ledger` — private ledger fields
 
 The `sealed` keyword makes a ledger field private — only the contract can read/write it, and the value is not visible on-chain.
@@ -1147,6 +1163,10 @@ export ledger token: P_TokenContract;
 ```
 
 This allows one contract to reference another's type at the ledger level. Cross-contract interaction is still commitment-based, not direct calls.
+
+---
+
+## Ecosystem Limitations (March 2026)
 
 ### 69. Wallet → contract token transfers not yet implemented in SDK (March 2026)
 
