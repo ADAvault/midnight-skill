@@ -234,7 +234,7 @@ npm test
 
 - **Not simulator-testable.** Like token-swap, this contract uses `mintShieldedToken`,
   `tokenType`, `receive(coin)`, and `kernel.self()` -- all of which require
-  the full Midnight network stack. Will be validated on rezi@rey once
+  the full Midnight network stack. Will be validated on preprod once
   devnet/testnet access is available.
 - **Nonce must be unique per mint call.** If the nonce is reused, the Zswap
   protocol rejects the transaction (duplicate coin commitment). The Counter
