@@ -1209,6 +1209,18 @@ test.todo('should transfer night from wallet to contract')  // unshielded — no
 
 Confirmed against midnight-js v3.2.0 (2026-03-11) and wallet-sdk v2.0.0 (2026-03-10). Verified via midnight-mcp search across all Midnight repos.
 
+**Ledger spec confirms protocol support (March 2026):**
+
+The midnight-ledger spec (`spec/contracts.md`, `spec/night.md`) confirms that wallet→contract unshielded transfers ARE supported at the protocol level:
+
+- `Effects.unshielded_inputs: Map<TokenType, u128>` — contracts declare expected unshielded inputs. The ledger validates that matching UTXO spends are present in the transaction.
+- `ContractState.balance: Map<TokenType, u128>` — contracts maintain token balances at the ledger level.
+- `CallContext.balance: Map<TokenType, u128>` — contracts can query their own balance during execution.
+
+The gap is purely in the SDK transaction builder (`midnight-js`), which does not read the contract's `Effects.unshielded_inputs` and automatically include wallet UTxOs to satisfy them. The ledger would accept the transaction if properly constructed.
+
+Ledger 8.0.1 also adds `last_block_time: Timestamp` to `CallContext` — confirming `blockTimeGte` is backed by the ledger runtime, not just the circuit compiler.
+
 ### 70. `callTx` works for non-token circuits, `callQry` does not exist on deployed contracts
 
 Post-deployment circuit calls via `deployed.callTx.circuitName()` work on-chain for circuits that don't involve token operations. Each call generates a ZK proof and submits a transaction (~20s).
