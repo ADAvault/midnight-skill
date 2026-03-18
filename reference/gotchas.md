@@ -1209,6 +1209,8 @@ test.todo('should transfer night from wallet to contract')  // unshielded — no
 
 Confirmed against midnight-js v3.2.0 (2026-03-11) and wallet-sdk v2.0.0 (2026-03-10). Verified via midnight-mcp search across all Midnight repos.
 
+**UPDATE (2026-03-18): Fix confirmed in Compact 0.30.0 / Ledger 8.0.2.** Compact Issue #151 ("Circuit call fails when using `sendUnshielded` and `receiveUnshielded`") is listed in the 0.30.0 fixed defect list (released 2026-03-17). Preview network has been upgraded to v8. Preprod upgrade pending. When preprod moves to v8, wallet→contract transfers should work. LOK contract compiles and passes tests on 0.30.0 with zero code changes.
+
 **Ledger spec confirms protocol support (March 2026):**
 
 The midnight-ledger spec (`spec/contracts.md`, `spec/night.md`) confirms that wallet→contract unshielded transfers ARE supported at the protocol level:
