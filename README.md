@@ -1,6 +1,6 @@
 # Midnight Compact Smart Contract Skill
 
-An [Agent Skill](https://agentskills.io) for writing, testing, and deploying **Compact smart contracts** on the **Midnight blockchain**. Built from Discord community knowledge, compiler validation, and real-world gotchas.
+An [Agent Skill](https://agentskills.io) for writing, testing, and deploying **Compact smart contracts** on the **Midnight blockchain**. Built from Discord community knowledge, compiler validation, and real-world gotchas. This project extends the [Midnight Network](https://midnight.network) with additional developer tooling.
 
 Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI coding assistants.
 
