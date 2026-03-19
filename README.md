@@ -8,7 +8,7 @@ Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI codi
 
 ## Compiler-Validated
 
-All examples compiled and tested against **Compact 0.29.0** and `@midnight-ntwrk/compact-runtime` 0.29.0.
+All examples compiled and tested against **Compact 0.29.0** (`compact-runtime` 0.14.0, ledger v7). Compact 0.30.0 (ledger v8) support validated — see gotcha #74 for migration guide.
 
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
