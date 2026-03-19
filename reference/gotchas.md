@@ -1337,6 +1337,8 @@ const wallet = await WalletFacade.init({
 
 **Key fix:** Issue #151 (`sendUnshielded`/`receiveUnshielded` circuit call failures) is resolved. Wallet→contract unshielded transfers work on v8.
 
+**Version mismatch errors:** Deploying a v8-compiled contract via v7 SDK gives "expected instance of ContractMaintenanceAuthority". Deploying a v7-compiled contract with v8 compact-runtime gives "Version mismatch: compiled code expects 0.14.0, runtime is 0.15.0". Always match: compiler version → runtime version → network ledger version.
+
 ---
 
 ## Version Compatibility
