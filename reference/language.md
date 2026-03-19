@@ -1273,7 +1273,7 @@ A consolidated list of compiler and runtime issues to be aware of.
 | Field overflow | High | Arithmetic on `Field` near max value returns out-of-bounds bigint instead of wrapping. Use `Uint<N>` for math. |
 | Bytes\<32\> equality | Medium | `==` comparison on `Bytes<32>` causes compiler crash in some versions. Use hash comparison as workaround. |
 | Uint\<256\> | Low | Not supported. Max is `Uint<128>`. |
-| Opaque hashing | High | `persistentHash`/`transientHash` on `Opaque<"...">` crashes the compiler. Convert to `Bytes<N>` first. |
+| Opaque hashing | High | `persistentHash`/`transientHash` on `Opaque<"...">` is a compiler error in 0.30.0+ (crashed in earlier versions). Convert to `Bytes<N>` first. |
 | Mod operator | High | Using `%` causes a Rust panic in the compiler. Compute modulo in a witness. |
 | Dynamic vector index | Low | `v[i]` where `i` is a variable does not compile. Only literal indices work. |
 | Vector mutation | Low | No syntax to update a single element. Must rebuild the entire vector. |
