@@ -437,27 +437,29 @@ When you call `deployedContract.callTx.increment()`:
 
 ### Programmatic Token Transfer
 
-For direct token transfers without a custom contract:
+For direct tNight transfers (v7 pattern — requires `signRecipe`, see gotcha #59):
 
 ```typescript
-import { nativeToken } from '@midnight-ntwrk/ledger-v7';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
 
-// Step 1: Build the transfer recipe
-const recipe = await wallet.transferTransaction([
-  {
-    amount: 1_000_000n,  // amount in smallest unit
-    receiverAddress: 'midnight1q...recipient_address...',
-    type: nativeToken(),
-  },
-]);
-
-// Step 2: Generate the ZK proof
-const proven = await wallet.proveTransaction(recipe);
-
-// Step 3: Submit to network
-const txId = await wallet.submitTransaction(proven);
-console.log(`Transfer submitted: ${txId}`);
+const recipe = await wallet.transferTransaction(
+  [{ type: "unshielded", outputs: [{
+    amount: 100_000_000n,  // 100 tNight
+    receiverAddress: 'mn_addr_preprod1...',
+    type: unshieldedToken().raw,
+  }] }],
+  { shieldedSecretKeys, dustSecretKey },
+  { ttl: new Date(Date.now() + 30 * 60 * 1000), payFees: true },
+);
+// REQUIRED: signRecipe before finalizing (gotcha #59 — error 139 without this)
+const signed = await wallet.signRecipe(recipe, (payload) => keystore.signData(payload));
+const finalized = await wallet.finalizeRecipe(signed);
+const txId = await wallet.submitTransaction(finalized);
 ```
+
+Multi-output transfers work — include multiple entries in the `outputs` array (gotcha #62).
+
+**v8 migration:** In WalletFacade 3.0.0-rc.0, wallet initialization uses `WalletFacade.init()` instead of the constructor. Import from `@midnight-ntwrk/ledger-v8` instead of `ledger-v7`. See gotcha #74 for full migration details.
 
 ### Reading Contract State
 

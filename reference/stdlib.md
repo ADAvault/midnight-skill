@@ -163,6 +163,81 @@ sendImmediateShielded(disclose(coin), recipient, disclose(amount));
 
 ---
 
+### Unshielded Token Operations
+
+These work with unshielded tokens (NIGHT and custom unshielded tokens). Amounts are visible on-chain.
+
+#### `receiveUnshielded(color: Bytes<32>, amount: Uint<128>)`
+
+Accept unshielded tokens into the contract.
+
+```compact
+receiveUnshielded(disclose(color), disclose(amount));
+```
+
+**NOTE:** On ledger v7, this fails via `callTx` with error 139 (gotcha #69). Fixed in ledger v8 / Compact 0.30.0 (Issue #151).
+
+---
+
+#### `sendUnshielded(color: Bytes<32>, amount: Uint<128>, recipient: Either<ContractAddress, UserAddress>)`
+
+Send unshielded tokens from the contract to a recipient.
+
+```compact
+sendUnshielded(disclose(color), disclose(amount), right<ContractAddress, UserAddress>(disclose(recipientAddr)));
+```
+
+---
+
+#### `mintUnshieldedToken(domainSep: Bytes<32>, value: Uint<64>, recipient: Either<ContractAddress, UserAddress>): Bytes<32>`
+
+Mint new unshielded tokens. Returns the token color.
+
+```compact
+const color = mintUnshieldedToken(disclose(domainSep), disclose(amount), right<ContractAddress, UserAddress>(disclose(recipient)));
+```
+
+---
+
+#### `unshieldedBalance(color: Bytes<32>): Uint<128>`
+
+Query the contract's own unshielded token balance.
+
+```compact
+const bal = unshieldedBalance(disclose(color));
+```
+
+---
+
+### Block Time Operations
+
+Protocol-enforced time comparisons. Validated by the block producer — cannot be spoofed.
+
+#### `blockTimeGte(time: Uint<64>): Boolean` / `blockTimeLt` / `blockTimeGt` / `blockTimeLte`
+
+Compare the current block time against a Unix timestamp (seconds since epoch). Returns `Boolean` — wrap in `assert()` to enforce.
+
+```compact
+assert(blockTimeGte(disclose(unlockTime)), "Too early");
+```
+
+**Simulator limitation:** Not enforced in `compact-runtime` simulator. On-chain, the block producer validates against the actual block timestamp (gotcha #65).
+
+---
+
+#### `evolveNonce(index: Uint<64>, nonce: Bytes<32>): Bytes<32>`
+
+Derive a unique nonce from a counter index and a prior nonce. Used for `mintShieldedToken` which requires unique nonces per call.
+
+```compact
+counter.increment(1);
+const newNonce = evolveNonce(counter, currentNonce);
+mintShieldedToken(domain, amount, newNonce, recipient);
+nonce = newNonce;
+```
+
+---
+
 #### `nativeToken(): TokenType`
 
 Returns the DUST token type (Midnight's native token).
@@ -427,7 +502,7 @@ export ledger message: Opaque<"string">;
 export ledger config: Opaque<"Config">;
 ```
 
-**WARNING:** Cannot hash Opaque types directly. `persistentHash<Opaque<"string">>(msg)` will crash the compiler. Convert to `Bytes<N>` first via a witness.
+**WARNING:** Cannot hash Opaque types directly. `persistentHash<Opaque<"string">>(msg)` is a compiler error in 0.30.0+ (crashed in earlier versions). Convert to `Bytes<N>` first via a witness.
 
 ### Type Casting
 

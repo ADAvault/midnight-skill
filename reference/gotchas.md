@@ -124,7 +124,7 @@ Passing an `Opaque` type to `persistentHash` causes a Rust panic in the
 Compact compiler. This is not a graceful error — the compiler crashes.
 
 ```compact
-// BAD — Rust panic / compiler crash
+// BAD — compiler error in 0.30.0+ (was a crash in earlier versions)
 const h = persistentHash<Opaque<"string">>(name);
 
 // GOOD — convert to Bytes<N> before hashing
@@ -1286,13 +1286,64 @@ export circuit sendToUser(color: Bytes<32>, amount: Uint<128>, recipient: UserAd
 
 This confirms the outbound token path works. Combined with `mintUnshieldedToken` (gotcha #71), contracts can create and distribute tokens. Only the inbound path (wallet→contract) remains blocked (gotcha #69).
 
+### 74. Migrating from Ledger v7 to v8 (Compact 0.29→0.30)
+
+Compact 0.30.0 targets Ledger v8. Contracts compiled for v7 will NOT work on v8 networks.
+
+**Compiler:** Install via `compact self update` then `compact update 0.30.0`. Check with `compact compile --ledger-version` → `ledger-8.0.2`.
+
+**Breaking changes:** `NativePoint` → `JubjubPoint` (use `compact fixup` to auto-rename). `persistentHash`/`persistentCommit` on `Opaque` values is now a compiler error.
+
+**SDK packages (confirmed working by Facu/Midnames, March 2026):**
+
+```json
+{
+  "@midnight-ntwrk/compact-js": "2.5.0-rc.1",
+  "@midnight-ntwrk/compact-runtime": "0.15.0-rc.1",
+  "@midnight-ntwrk/ledger-v8": "8.0.2",
+  "@midnight-ntwrk/midnight-js-contracts": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/midnight-js-http-client-proof-provider": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/midnight-js-level-private-state-provider": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/midnight-js-network-id": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/midnight-js-node-zk-config-provider": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/midnight-js-types": "3.2.1-0-pre.3ce66bd",
+  "@midnight-ntwrk/wallet-sdk-facade": "3.0.0-rc.0",
+  "@midnight-ntwrk/wallet-sdk-dust-wallet": "3.0.0-rc.0",
+  "@midnight-ntwrk/wallet-sdk-shielded": "2.1.0-rc.0",
+  "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "2.1.0-rc.0",
+  "@midnight-ntwrk/wallet-sdk-hd": "3.0.1"
+}
+```
+
+**Critical:** If ANY dependency transitively imports `ledger-v7`, you will get error 139 on token operations. Check with `npm why @midnight-ntwrk/ledger-v7`.
+
+**WalletFacade v8 init:**
+
+```typescript
+// v7: constructor
+const wallet = new WalletFacade(sw, uw, dw);
+
+// v8: static init
+const wallet = await WalletFacade.init({
+  configuration: config,
+  shielded: () => shieldedWallet,
+  unshielded: () => unshieldedWallet,
+  dust: () => dustWallet,
+});
+```
+
+**Proof server:** Docker `midnightntwrk/proof-server:8.0.2`. Run: `docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.2 midnight-proof-server --port 6300`.
+
+**Key fix:** Issue #151 (`sendUnshielded`/`receiveUnshielded` circuit call failures) is resolved. Wallet→contract unshielded transfers work on v8.
+
 ---
 
 ## Version Compatibility
 
 > **WARNING:** Midnight is pre-mainnet software. APIs, syntax, and tooling
 > change between versions. The gotchas above were confirmed as of early 2025
-> (Compact toolchain 0.25.x-0.29.x range). Always check the latest release
+> (Compact toolchain 0.25.x-0.30.x range). Always check the latest release
 > notes, as some of these issues may be fixed in newer versions.
 
 **The golden rule:** When something isn't working, check this list first,
