@@ -1363,7 +1363,11 @@ await Rx.firstValueFrom(wallet.state().pipe(
 
 DUST economics: 5 DUST per NIGHT, ~1 week to reach cap, 3-hour grace period after backing NIGHT is spent.
 
+**Facade version differences:** The dust balance check above uses the facade 1.0.0 API (`s.dust.walletBalance`). In facade 3.0.0 the path is `s.dust.state.state.walletBalance(new Date())` (WASM object).
+
 **Known issue:** If a transaction fails after DUST is allocated for balancing, the DUST coins become stuck in a "pending" state. Restart the wallet to recover them.
+
+**Note:** In facade 3.0.0, `WalletFacade.init()` requires `ledger-v8` for `ZswapSecretKeys.fromSeed()` and `DustSecretKey.fromSeed()` — using `ledger-v7` types causes "expected instance of DustParameters".
 
 ### 76. signRecipe Bug — Failed to Clone Intent
 
@@ -1401,7 +1405,7 @@ signTransactionIntents(recipe.balancingTransaction, signFn, 'pre-proof'); // wal
 return wallet.finalizeRecipe(recipe);
 ```
 
-This bug is in `@midnight-ntwrk/wallet-sdk-unshielded-wallet` (`TransactionOps.ts`). Check if fixed before applying the workaround. The official counter example uses this exact pattern.
+This bug is in `@midnight-ntwrk/wallet-sdk-unshielded-wallet` (`TransactionOps.ts`). **Update (March 2026):** `wallet.signRecipe()` works correctly in wallet-sdk-facade 3.0.0 — the bug appears to be fixed. On-chain validated with `receiveUnshielded` on v8 preprod. The manual workaround is only needed for facade 1.0.0.
 
 ### 77. Wrong Token Type Shows Zero Balance
 
