@@ -168,17 +168,30 @@ Compiling all examples against the real compiler uncovered several patterns not 
 
 All findings are documented in [gotchas.md](reference/gotchas.md) (#49-#52) and in each example's Key Concepts section.
 
+### v8 Migration Findings
+
+The Ledger v8 release (March 2026) introduced significant SDK changes discovered during validation:
+
+- **Witness tuple return** — witnesses now return `[nextPrivateState, value]` instead of just `value` (gotcha #79)
+- **Simulator API** — `contract.initialState(ctx, ...args)` replaces `contract.constructor(ctx)` (gotcha #79)
+- **Dust registration required** — must call `registerNightUtxosForDustGeneration()` before any deployment (gotcha #75)
+- **`signRecipe` bug fixed** — wallet-sdk-facade 3.0.0 handles proof markers correctly (gotcha #76)
+- **`nativeToken()` trap** — use `unshieldedToken().raw` from ledger-v7 for balance lookups (gotcha #77)
+- **Private state encryption** — `levelPrivateStateProvider` now requires encryption config (gotcha #78)
+
 ## Sources
 
 Built from:
 - **Midnight Discord dev-chat** (Feb 2024 — Mar 2026)
 - **OpenZeppelin/compact-contracts** — canonical Compact library
-- **Official Midnight examples** — counter, bulletin board
+- **Official Midnight examples** — counter, bulletin board, counter-cli migration guide
 - **Brick Towers** projects — seabattle, local-network, proof-server, RWA
 - **Existing community skills** — UvRoxx, FractionEstate, OverGuild, mzf11125
-- **Compiler validation** — every example compiled and tested against Compact 0.29.0
-- **Preprod deployment** — 30 contracts deployed on Midnight preprod with ZK proofs verified on-chain
+- **Compiler validation** — every example compiled against Compact 0.29.0 and 0.30.0
+- **Simulator validation** — 29/29 examples pass on compact-runtime 0.15.0
+- **Preprod deployment** — 6 contracts deployed on v8 preprod (Ledger 8.0.3, protocol v22000)
 - **[midnight-mcp](https://github.com/Olanetsoft/midnight-mcp)** — MCP server for searching across 102+ Midnight repos. Complementary tool: the MCP provides live search, this skill provides validated patterns. Several gotchas (#64, #65) were discovered via MCP search.
+- **[docs.midnight.network/relnotes/overview](https://docs.midnight.network/relnotes/overview)** — official v8 compatibility matrix
 
 ## Contributing
 
