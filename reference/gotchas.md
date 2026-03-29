@@ -1447,6 +1447,52 @@ Providing BOTH also throws an error.
 
 **WARNING:** `levelPrivateStateProvider` has no recovery mechanism. Clearing browser cache or deleting local files permanently destroys private state.
 
+### 79. Simulator API Changed in compact-runtime 0.15.0
+
+The simulator API changed significantly in compact-runtime 0.15.0 (Compact 0.30.0). All 29 skill examples validated on the new API.
+
+**Constructor invocation:**
+
+```typescript
+// Old (0.14.0)
+const ctx = createConstructorContext(contractAddress, zswapLocalState, ...constructorArgs);
+const result = contract.constructor(ctx);
+// result.currentContractState, result.currentPrivateState, result.currentZswapLocalState
+
+// New (0.15.0)
+const ctx = createConstructorContext(initialPrivateState, coinPublicKey);
+const result = contract.initialState(ctx, ...constructorArgs);
+// result.currentContractState, result.currentPrivateState, result.currentZswapLocalState
+```
+
+Key changes: constructor args go to `initialState()`, not `createConstructorContext()`. The context factory takes `(privateState, coinPubKey)` instead of `(addr, zswap)`.
+
+**Witness return format:**
+
+```typescript
+// Old (0.14.0) — return just the value
+localSecretKey: (witnessContext) => mySecretKey,
+
+// New (0.15.0) — return [nextPrivateState, value] tuple
+localSecretKey: (witnessContext) => [witnessContext.privateState, mySecretKey],
+```
+
+**Circuit result access:**
+
+```typescript
+// Old (0.14.0)
+const result = contract.impureCircuits.increment(ctx);
+const ledgerState = mod.ledger(result.currentContractState);
+
+// New (0.15.0)
+const result = contract.impureCircuits.increment(ctx);
+const ledgerState = mod.ledger(result.context.currentQueryContext.state);
+// Chain state: result.context (use as next circuit's context)
+```
+
+**Circuit context creation remains 4-arg** (with 3 optional):
+`createCircuitContext(contractAddress, zswapLocalState, contractState, privateState, gasLimit?, costModel?, time?)`
+
 ---
 
 ## Version Compatibility
