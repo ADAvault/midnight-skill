@@ -1288,64 +1288,174 @@ This confirms the outbound token path works. Combined with `mintUnshieldedToken`
 
 ### 74. Migrating from Ledger v7 to v8 (Compact 0.29→0.30)
 
-Compact 0.30.0 targets Ledger v8. Contracts compiled for v7 will NOT work on v8 networks.
+Compact 0.30.0 targets Ledger v8. Contracts compiled for v7 will NOT work on v8 networks. Ledger v7 is officially unsupported as of March 2026.
 
 **Compiler:** Install via `compact self update` then `compact update 0.30.0`. Check with `compact compile --ledger-version` → `ledger-8.0.2`.
 
 **Breaking changes:** `NativePoint` → `JubjubPoint` (use `compact fixup` to auto-rename). `persistentHash`/`persistentCommit` on `Opaque` values is now a compiler error.
 
-**SDK packages (confirmed working by Facu/Midnames, March 2026):**
+**Official v8 compatibility matrix (from docs.midnight.network/relnotes/overview, March 2026):**
 
-```json
-{
-  "@midnight-ntwrk/compact-js": "2.5.0-rc.1",
-  "@midnight-ntwrk/compact-runtime": "0.15.0-rc.1",
-  "@midnight-ntwrk/ledger-v8": "8.0.2",
-  "@midnight-ntwrk/midnight-js-contracts": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/midnight-js-http-client-proof-provider": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/midnight-js-level-private-state-provider": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/midnight-js-network-id": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/midnight-js-node-zk-config-provider": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/midnight-js-types": "3.2.1-0-pre.3ce66bd",
-  "@midnight-ntwrk/wallet-sdk-facade": "3.0.0-rc.0",
-  "@midnight-ntwrk/wallet-sdk-dust-wallet": "3.0.0-rc.0",
-  "@midnight-ntwrk/wallet-sdk-shielded": "2.1.0-rc.0",
-  "@midnight-ntwrk/wallet-sdk-unshielded-wallet": "2.1.0-rc.0",
-  "@midnight-ntwrk/wallet-sdk-hd": "3.0.1"
-}
-```
+| Component | Version |
+|-----------|---------|
+| Ledger | 8.0.3 |
+| Proof Server | 8.0.3 |
+| Compact Runtime | 0.15.0 |
+| Compact Compiler (compactc) | 0.30.0 |
+| Compact Toolchain (compact) | 0.5.1 |
+| Compact JS | 2.5.0 |
+| Indexer | 4.0.1 |
+| Midnight.js | 4.0.2 |
+| Wallet SDK Facade | 3.0.0 |
+| DApp Connector API | 4.0.1 |
 
-**Critical:** If ANY dependency transitively imports `ledger-v7`, you will get error 139 on token operations. Check with `npm why @midnight-ntwrk/ledger-v7`.
+**Note:** The official counter example (midnightntwrk/example-counter) still uses older versions (midnight-js 3.0.0, wallet-sdk-facade 1.0.0, compact-runtime 0.14.0, ledger-v7 imports). Both version sets work on the v8 network. The compatibility matrix versions are the officially recommended ones.
 
-**WalletFacade v8 init:**
+**WalletFacade construction:**
 
 ```typescript
-// v7: constructor
-const wallet = new WalletFacade(sw, uw, dw);
-
-// v8: static init
-const wallet = await WalletFacade.init({
-  configuration: config,
-  shielded: () => shieldedWallet,
-  unshielded: () => unshieldedWallet,
-  dust: () => dustWallet,
-});
+// 3-arg constructor (works with wallet-sdk-facade 1.0.0 and 3.0.0)
+const wallet = new WalletFacade(shieldedWallet, unshieldedWallet, dustWallet);
+await wallet.start(shieldedSecretKeys, dustSecretKey);
 ```
 
-**Proof server:** Docker `midnightntwrk/proof-server:8.0.2`. Run: `docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.2 midnight-proof-server --port 6300`.
+The constructor takes three sub-wallets (ShieldedWallet, UnshieldedWallet, DustWallet), each configured independently. See offchain.md for full setup pattern.
+
+**Proof server:** Docker `midnightntwrk/proof-server:8.0.3`. The `--network` flag is no longer accepted. Run: `docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.3 midnight-proof-server --port 6300`. Remote proof servers via Lace are currently unavailable — run locally.
 
 **Key fix:** Issue #151 (`sendUnshielded`/`receiveUnshielded` circuit call failures) is resolved. Wallet→contract unshielded transfers work on v8.
 
 **Version mismatch errors:** Deploying a v8-compiled contract via v7 SDK gives "expected instance of ContractMaintenanceAuthority". Deploying a v7-compiled contract with v8 compact-runtime gives "Version mismatch: compiled code expects 0.14.0, runtime is 0.15.0". Always match: compiler version → runtime version → network ledger version.
+
+### 75. Dust Registration Required Before Contract Interaction
+
+NIGHT tokens generate DUST (the fee token) over time, but only after UTxOs are explicitly registered for dust generation via an on-chain transaction. Without DUST, all contract deployments and circuit calls fail with `Wallet.InsufficientFunds: could not balance dust`.
+
+Registration flow:
+
+```typescript
+const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
+
+// 1. Check if dust already available
+if (state.dust.availableCoins.length > 0 && state.dust.walletBalance(new Date()) > 0n) return;
+
+// 2. Filter unregistered NIGHT coins
+const nightUtxos = state.unshielded.availableCoins.filter(
+  (coin) => coin.meta?.registeredForDustGeneration !== true,
+);
+
+// 3. Register
+if (nightUtxos.length > 0) {
+  const recipe = await wallet.registerNightUtxosForDustGeneration(
+    nightUtxos, unshieldedKeystore.getPublicKey(),
+    (payload) => unshieldedKeystore.signData(payload),
+  );
+  const finalized = await wallet.finalizeRecipe(recipe);
+  await wallet.submitTransaction(finalized);
+}
+
+// 4. Wait for dust to accrue
+await Rx.firstValueFrom(wallet.state().pipe(
+  Rx.throttleTime(5_000),
+  Rx.filter((s) => s.isSynced && s.dust.walletBalance(new Date()) > 0n),
+));
+```
+
+DUST economics: 5 DUST per NIGHT, ~1 week to reach cap, 3-hour grace period after backing NIGHT is spent.
+
+**Known issue:** If a transaction fails after DUST is allocated for balancing, the DUST coins become stuck in a "pending" state. Restart the wallet to recover them.
+
+### 76. signRecipe Bug — Failed to Clone Intent
+
+`wallet.signRecipe()` has a known bug: it hardcodes `'pre-proof'` as the proof marker when cloning intents via `Intent.deserialize()`. This works for `UnprovenTransaction` (which has `PreProof` intents) but fails for `UnboundTransaction` (which has `Proof` intents after proving). The error is "Failed to clone intent".
+
+**Workaround:** Bypass `signRecipe()` and sign manually with correct proof markers:
+
+```typescript
+const signTransactionIntents = (tx, signFn, proofMarker) => {
+  if (!tx.intents || tx.intents.size === 0) return;
+  for (const segment of tx.intents.keys()) {
+    const intent = tx.intents.get(segment);
+    if (!intent) continue;
+    const cloned = ledger.Intent.deserialize('signature', proofMarker, 'pre-binding', intent.serialize());
+    const sigData = cloned.signatureData(segment);
+    const signature = signFn(sigData);
+    if (cloned.fallibleUnshieldedOffer) {
+      const sigs = cloned.fallibleUnshieldedOffer.inputs.map(
+        (_, i) => cloned.fallibleUnshieldedOffer.signatures.at(i) ?? signature);
+      cloned.fallibleUnshieldedOffer = cloned.fallibleUnshieldedOffer.addSignatures(sigs);
+    }
+    if (cloned.guaranteedUnshieldedOffer) {
+      const sigs = cloned.guaranteedUnshieldedOffer.inputs.map(
+        (_, i) => cloned.guaranteedUnshieldedOffer.signatures.at(i) ?? signature);
+      cloned.guaranteedUnshieldedOffer = cloned.guaranteedUnshieldedOffer.addSignatures(sigs);
+    }
+    tx.intents.set(segment, cloned);
+  }
+};
+
+// In balanceTx:
+const recipe = await wallet.balanceUnboundTransaction(tx, keys, { ttl });
+signTransactionIntents(recipe.baseTransaction, signFn, 'proof');        // proven tx
+signTransactionIntents(recipe.balancingTransaction, signFn, 'pre-proof'); // wallet-created
+return wallet.finalizeRecipe(recipe);
+```
+
+This bug is in `@midnight-ntwrk/wallet-sdk-unshielded-wallet` (`TransactionOps.ts`). Check if fixed before applying the workaround. The official counter example uses this exact pattern.
+
+### 77. Wrong Token Type Shows Zero Balance
+
+The wallet shows zero balance despite receiving funds if you use the wrong token type for balance lookup.
+
+```typescript
+// WRONG — nativeToken() returns 68-char tagged hex (02000000...0000)
+import { nativeToken } from '@midnight-ntwrk/ledger';
+const balance = state.unshielded.balances[nativeToken()]; // always undefined
+
+// CORRECT — unshieldedToken().raw returns 64-char raw hex (0000...0000)
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+const balance = state.unshielded.balances[unshieldedToken().raw]; // actual balance
+```
+
+**Debugging tip:** If wallet shows `isSynced: true` but zero balance, log `Object.keys(state.unshielded.balances)` and compare key lengths. 64-char = correct (ledger-v7). 68-char = wrong (old ledger v4).
+
+### 78. levelPrivateStateProvider Requires Encryption Config
+
+Since midnight-js 3.0.0, `levelPrivateStateProvider` requires encryption configuration. Passing neither `walletProvider` nor `privateStoragePasswordProvider` throws at runtime:
+
+```
+Either privateStoragePasswordProvider or walletProvider must be provided
+```
+
+Provide exactly ONE of:
+
+```typescript
+// Recommended — uses wallet's encryption public key
+levelPrivateStateProvider({
+  privateStateStoreName: 'myStore',
+  walletProvider: walletAndMidnightProvider,
+});
+
+// Alternative — custom password (minimum 16 characters)
+levelPrivateStateProvider({
+  privateStateStoreName: 'myStore',
+  privateStoragePasswordProvider: () => 'min-16-char-password',
+});
+```
+
+Providing BOTH also throws an error.
+
+**WARNING:** `levelPrivateStateProvider` has no recovery mechanism. Clearing browser cache or deleting local files permanently destroys private state.
 
 ---
 
 ## Version Compatibility
 
 > **WARNING:** Midnight is pre-mainnet software. APIs, syntax, and tooling
-> change between versions. The gotchas above were confirmed as of early 2025
-> (Compact toolchain 0.25.x-0.30.x range). Always check the latest release
+> change between versions. The gotchas above were confirmed from early 2025
+> through March 2026 (Compact toolchain 0.25.x-0.30.x range). The v8 release
+> (Ledger 8.0.3, March 2026) is the current target for both Preview and PreProd.
+> Always check the latest release
 > notes, as some of these issues may be fixed in newer versions.
 
 **The golden rule:** When something isn't working, check this list first,
