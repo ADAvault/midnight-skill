@@ -8,7 +8,7 @@ Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI codi
 
 ## Compiler-Validated
 
-All examples compiled and tested against **Compact 0.29.0** (`compact-runtime` 0.14.0, ledger v7). Compact 0.30.0 (ledger v8) support validated — see gotcha #74 for migration guide.
+All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0.15.0, ledger v8). Also compatible with Compact 0.29.0 (ledger v7). See gotcha #74 for migration guide.
 
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
@@ -42,57 +42,38 @@ All examples compiled and tested against **Compact 0.29.0** (`compact-runtime` 0
 | [Revenue Sharing](examples/revenue-sharing.md) | 3 | 7/7 | Validated |
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 
-**27/29 validated. 151 circuits compiled. 182/182 tests passing. 30 contracts deployed on preprod.**
+**29/29 compile on Compact 0.30.0. 143 circuits. 29/29 simulator-validated on compact-runtime 0.15.0. 6 contracts deployed on v8 preprod.**
 
-Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`, `tokenType`, `kernel.self()`) that require the full network stack and cannot be tested in the simulator. Both are compiled and deployed on preprod.
+Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`) that require the full network stack for circuit calls. Both compile and deploy successfully.
 
 ## Preprod Deployment
 
-30 contracts from this skill deployed to Midnight **preprod** (protocol v21000, March 2026). All transactions confirmed on-chain with ZK proofs generated and verified.
+### v8 (Ledger 8.0.3, March 2026)
 
-| Contract | Circuits | DUST Fee | Deploy Time | Block |
-|----------|----------|----------|-------------|-------|
-| Counter | 3 | 252B | 21.1s | 624936 |
-| Bulletin Board | 2 | 267B | 17.8s | 624939 |
-| Fungible Token | 7 | 560B | 18.6s | 625467 |
-| Rock-Paper-Scissors | 3 | 367B | 18.8s | 623130 |
-| NFT | 7 | 712B | 21.7s | 623134 |
-| Escrow | 3 | 360B | 17.8s | 624942 |
-| Time Lock | 3 | 363B | 18.9s | 624945 |
-| Multi-Sig | 6 | 574B | 18.3s | 624948 |
-| Identity Proof | 4 | 451B | 17.7s | 624957 |
-| Credential Registry | 5 | 479B | 20.1s | 623138 |
-| Prescription | 5 | 480B | 21.6s | 623150 |
-| Privacy Mixer | 3 | 294B | 21.3s | 624854 |
-| Shielded Voting | 6 | 660B | 19.4s | 624960 |
-| Sealed-Bid Auction | 5 | 554B | 17.7s | 624963 |
-| Oracle Feed | 5 | 504B | 17.2s | 624951 |
-| Access Control | 8 | 931B | 17.8s | 624954 |
-| DID Registry | 5 | 526B | 21.5s | 623142 |
-| Micro-DAO | 7 | 697B | 20.1s | 623146 |
-| Upgradability V1 | 3 | 331B | 21.7s | 623154 |
-| Upgradability V2 | 3 | 721B | 20.2s | 623158 |
-| Token Swap | 6 | 645B | 18.6s | 625619 |
-| Token Minting | 3 | 349B | 21.5s | 623162 |
-| Prediction Market | 5 | 523B | 20.1s | 623166 |
-| Staking | 5 | 548B | 21.6s | 623170 |
-| Crowdfunding | 5 | 564B | 20.2s | 623174 |
-| Lending | 6 | 629B | 16.2s | 623177 |
-| Lottery | 4 | 485B | 16.9s | 624857 |
-| Vesting | 4 | 418B | 18.9s | 624860 |
-| Revenue Sharing | 3 | 332B | 18.0s | 624863 |
-| Supply Chain | 4 | 390B | 17.8s | 624866 |
+6 contracts deployed to Midnight **preprod** on Ledger v8 (protocol v22000). Representative sample validating all major patterns.
 
-**Total: 15,011B DUST across 30 deployments. Average: ~500B DUST per contract.**
+| Contract | Pattern | Circuits | Deploy Time | Block |
+|----------|---------|----------|-------------|-------|
+| Counter | simplest | 3 | 17.8s | 113914 |
+| Bulletin Board | auth | 2 | 19.1s | 113920 |
+| Sealed-Bid Auction | commit-reveal + state machine | 5 | 16.9s | 113926 |
+| Oracle Feed | time-based | 5 | 19.0s | 113932 |
+| Multi-Sig | multi-party | 6 | 17.5s | 113935 |
+| LOK | token ops (receiveUnshielded) | 4 | 17.4s | 113741 |
+
+`receiveUnshielded` (wallet→contract token transfer) confirmed working on v8 — Issue #151 resolved.
+
+### v7 (historical, chain wiped)
+
+30 contracts were previously deployed on Ledger v7 (protocol v21000). Chain state was reset with the v8 upgrade on March 25, 2026.
 
 ### DUST Fee Economics
 
-DUST is Midnight's fee token — a high-precision micro-token generated continuously from tNight (the staking/governance token). Values above are in the smallest indivisible DUST unit.
+DUST is Midnight's fee token — generated continuously from tNight. Must register NIGHT UTxOs for dust generation before any deployment (gotcha #75).
 
-- **Generation rate**: `nightDustRatio = 5,000,000,000` — each tNight generates up to 5B DUST/sec, decaying over ~7 days (`timeToCapSeconds = 604,815`)
-- **Fee range**: 331B–721B DUST per deployment, correlating with contract size and circuit count
-- **Practical cost**: with 2,000 tNight (~$2 from faucet), DUST generation far outpaces deployment fees — all 13 contracts deployed with DUST to spare
-- **Fee = estimated**: `paidFees` matched `estimatedFees` exactly for every deployment, indicating deterministic fee calculation
+- **Generation rate**: 5 DUST per NIGHT, ~1 week to cap
+- **Deploy time**: 16-22s per contract on preprod
+- **Practical cost**: 1000 tNight from faucet generates ample DUST for dozens of deployments
 
 ## What's Covered
 
