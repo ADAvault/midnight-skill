@@ -52,14 +52,14 @@ Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `send
 
 6 contracts deployed to Midnight **preprod** on Ledger v8 (protocol v22000). Representative sample validating all major patterns.
 
-| Contract | Pattern | Circuits | Deploy Time | Block |
-|----------|---------|----------|-------------|-------|
-| Counter | simplest | 3 | 17.8s | 113914 |
-| Bulletin Board | auth | 2 | 19.1s | 113920 |
-| Sealed-Bid Auction | commit-reveal + state machine | 5 | 16.9s | 113926 |
-| Oracle Feed | time-based | 5 | 19.0s | 113932 |
-| Multi-Sig | multi-party | 6 | 17.5s | 113935 |
-| LOK | token ops (receiveUnshielded) | 4 | 17.4s | 113741 |
+| Contract | Pattern | Circuits | DUST Fee | Deploy Time | Block |
+|----------|---------|----------|---------|-------------|-------|
+| Counter | simplest | 3 | 252B | 17.8s | 114208 |
+| Bulletin Board | auth | 2 | 267B | 19.1s | 114211 |
+| Sealed-Bid Auction | commit-reveal + state machine | 5 | 554B | 16.9s | 114214 |
+| Oracle Feed | time-based | 5 | 504B | 19.0s | 114217 |
+| Multi-Sig | multi-party | 6 | 574B | 17.5s | 114220 |
+| LOK | token ops (receiveUnshielded) | 4 | 423B | 17.4s | 114223 |
 
 `receiveUnshielded` (wallet→contract token transfer) confirmed working on v8 — Issue #151 resolved.
 
