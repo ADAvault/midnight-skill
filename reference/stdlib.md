@@ -2,6 +2,8 @@
 
 Quick-reference for every built-in function, ledger type, and core type in Compact.
 
+> All stdlib operations confirmed working on Compact 0.30.0 / Ledger v8. No signature changes from 0.29.0.
+
 ---
 
 ## 1. CompactStandardLibrary
@@ -247,7 +249,9 @@ Returns the DUST token type (Midnight's native token).
 const isDust = (coinType == nativeToken());
 ```
 
-**NOTE (JS side):** In TypeScript, import `nativeToken` from the midnight-js package, not from the contract.
+**Token Type Lookup (TypeScript side):**
+- `unshieldedToken().raw` from `@midnight-ntwrk/ledger-v7` — 64-char raw hex. Use for balance lookups.
+- `nativeToken()` from `@midnight-ntwrk/ledger` v4 — 68-char tagged hex. **DO NOT use for balance lookups** — returns zero despite having funds (gotcha #77).
 
 ---
 

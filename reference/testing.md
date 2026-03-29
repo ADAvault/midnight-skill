@@ -27,11 +27,22 @@ move toward real network conditions.
 ### Level 3: Testnet (Preview / Preprod)
 
 - **Speed:** Minutes (block times + proof generation + network latency)
-- **Requirements:** Testnet tDUST, wallet, running proof server
+- **Requirements:** tNight (from faucet), wallet, local proof server
 - **Proof generation:** Real ZK proofs
-- **Network:** Public Midnight testnet
+- **Network:** Public Midnight testnet (Preview or Preprod)
 - **When to use:** Final validation before mainnet. Tests real network conditions,
   consensus, public indexer, and cross-user interaction.
+
+**Prerequisites (must complete before any contract deployment):**
+
+1. **Fund wallet** — Request tNight from faucet (https://faucet.preprod.midnight.network or https://faucet.preview.midnight.network)
+2. **Register for dust** — Call `wallet.registerNightUtxosForDustGeneration()` to register NIGHT UTxOs. Without this, all deployments fail with "could not balance dust" (gotcha #75).
+3. **Wait for dust** — DUST accrues over time. Wait until `state.dust.walletBalance(new Date()) > 0n` before deploying.
+4. **Run local proof server** — Remote proof servers through Lace are currently unavailable. Run locally:
+   ```bash
+   docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.3 midnight-proof-server --port 6300
+   ```
+   Note: Docker registry moved from `midnightnetwork/` to `midnightntwrk/`. The `--network` flag is no longer accepted — use `-v` for verbose mode only.
 
 ---
 
@@ -136,6 +147,22 @@ The returned object gives you the full state after constructor execution:
 - `currentPrivateState` -- updated private state (witnesses may have modified it)
 - `currentContractState` -- ledger state (public on-chain data)
 - `currentZswapLocalState` -- local Zswap coin state (relevant for token operations)
+
+### Simulator API Change (compact-runtime 0.15.0)
+
+The `Simulator` constructor changed in compact-js 2.5.0:
+
+```typescript
+// Old pattern (compact-runtime 0.14.0)
+const sim = new Simulator(witnesses);
+const ledgerState = sim.ledger(Counter.initialState(new Uint8Array(32)));
+
+// New pattern (compact-runtime 0.15.0 / compact-js 2.5.0)
+const sim = Simulator.make(Counter.Contract, witnesses);
+const ledgerState = sim.state('counter').data;
+```
+
+If using compact-runtime 0.14.0 with ledger-v7, the old pattern still works. The new pattern is required with compact-runtime 0.15.0.
 
 ### Executing Circuits
 
@@ -545,7 +572,7 @@ const GENESIS_WALLET_SEED =
   "0000000000000000000000000000000000000000000000000000000000000001";
 ```
 
-Use this seed to create a wallet with tDUST for deploying contracts and
+Use this seed to create a wallet with tNight for deploying contracts and
 submitting transactions on the local network.
 
 ### Standalone Network Test Example
