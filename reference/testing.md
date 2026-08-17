@@ -35,7 +35,11 @@ move toward real network conditions.
 
 **Prerequisites (must complete before any contract deployment):**
 
-1. **Fund wallet** — Request tNight from faucet (https://faucet.preprod.midnight.network or https://faucet.preview.midnight.network)
+1. **Fund wallet** — Request tNight from the faucet:
+   preprod <https://midnight-tmnight-preprod.nethermind.dev/> ·
+   preview <https://midnight-tmnight-preview.nethermind.dev/>
+   (the older `faucet.*.midnight.network` URLs were superseded in June 2026).
+   Check `/api/health` on either before a session — testnets go out of service regularly.
 2. **Register for dust** — Call `wallet.registerNightUtxosForDustGeneration()` to register NIGHT UTxOs. Without this, all deployments fail with "could not balance dust" (gotcha #75).
 3. **Wait for dust** — DUST accrues over time. Wait until `state.dust.walletBalance(new Date()) > 0n` before deploying.
 4. **Run local proof server** — Remote proof servers through Lace are currently unavailable. Run locally:

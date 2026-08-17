@@ -244,7 +244,7 @@ tokenType(pad(32, "myToken"), kernel.self());             // get token type ID
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/midnightntwrk/compact/releases/latest/download/compact-installer.sh | sh
 compact self update                    # update dev tools FIRST
-compact update 0.29.0                  # then update toolchain
+compact update 0.31.1                  # then update toolchain — see the 0.31.0 warning below
 
 # Scaffold, compile, test
 npx create-mn-app my-project           # scaffold new project
@@ -252,6 +252,52 @@ compact compile src/contract.compact src/managed/contract  # compile
 compact fmt src/contract.compact       # format (compiler 0.25.0+)
 npm test                               # run tests (Vitest/Jest)
 ```
+
+## ⚠ SECURITY: do not compile with Compact 0.31.0
+
+**Compact 0.31.0 has a soundness bug.** It can silently **drop a range constraint** from a
+circuit. Fixed in **0.31.1** — use that or later for anything you will deploy.
+
+If you deployed anything compiled with 0.31.0, Midnight's guidance is:
+
+1. Recompile the same source with 0.31.1.
+2. **Diff the resulting verifier key against the one deployed on-chain.**
+3. Keys identical → the bug did not fire; that deployment is fine.
+4. Keys differ → the bug may have dropped a range constraint. Assess exposure: does any
+   `Uint<N>` cast feed a **balance, quorum, counter, index**, or other security-relevant sink?
+5. Exposed → redeploy with 0.31.1. The on-chain verifier key **cannot be patched in place**;
+   it can only be replaced by redeploying, or via maintenance authority if you have a
+   reachable committee.
+
+⚠ **Do not try to find this by reading your source.** Midnight's own analysis: *"the trigger
+has too many non-obvious origins for pattern review to be reliable. The VK diff is the
+authoritative check."*
+
+This matters most for the patterns in `examples/` that touch value or authority —
+`fungible-token`, `lending`, `multi-sig` (quorum), `crowdfunding`, `sealed-bid-auction`.
+
+## Current versions (verified 2026-08-17)
+
+Authoritative matrix: <https://docs.midnight.network/relnotes/support-matrix>
+
+| component | version |
+|---|---|
+| Compact compiler | **0.31.1** |
+| `@midnight-ntwrk/compact-runtime` | **0.16.0** |
+| Midnight.js (`midnight-js-*`) | **4.1.1** |
+| DApp Connector API | 4.0.1 |
+| Node | 1.0.1 |
+| Ledger | 8.1.0 |
+| Indexer | 4.3.3 |
+| Proof Server | 8.1.0 |
+
+⚠ **Keep every `@midnight-ntwrk/midnight-js-*` package on the same major line.** Mixing 3.x
+and 4.x produces `Cannot read properties of undefined (reading 'ctor')` — an error that looks
+like a contract problem and is not. **Ledger v7 is no longer supported.**
+
+The simulator API used throughout this skill (`createConstructorContext`,
+`createCircuitContext`, `sampleContractAddress`) was **verified present in compact-runtime
+0.16.0** on 2026-08-17.
 
 ## Testing
 
@@ -318,7 +364,62 @@ Measured from 13 contract deployments on preprod (March 2026):
 - DUST accrues passively from tNight — no explicit conversion needed
 - The `DustWallet` SDK handles fee calculation and payment automatically
 - Set `additionalFeeOverhead` in `DustWallet` config for fee buffer (default examples use 300T DUST)
-- On preprod, request tNight from the [Midnight faucet](https://faucet.preprod.midnight.network/) — 1,000 tNight per request is sufficient for dozens of deployments
+- On preprod, request tNight from the faucet (below) — 1,000 tNight per request is sufficient
+  for dozens of deployments
+
+⚠ **DUST ordering matters.** Create wallet → request tNight → designate a DUST address. If you
+funded the wallet *before* designating, send tNight to yourself to create a new UTXO that will
+generate DUST. Getting this order wrong leaves the send option greyed out with no explanation.
+
+## Networks (verified 2026-08-17)
+
+**Mainnet is live** — Node 1.0.0 from 20 Jul 2026, 1.0.1 from 29 Jul. It runs in **federated**
+mode: block production is operated by the foundation, and third-party validation has not opened.
+An Incentivised Testnet is expected to precede it.
+
+| | endpoint |
+|---|---|
+| mainnet RPC | `https://rpc.mainnet.midnight.network/` |
+| mainnet indexer | `https://indexer.mainnet.midnight.network/api/v4/graphql` |
+| **preprod faucet** | `https://midnight-tmnight-preprod.nethermind.dev/` |
+| **preview faucet** | `https://midnight-tmnight-preview.nethermind.dev/` |
+| status | `https://status.shielded.tools/preprod` · `/preview` |
+| service desk | <https://midnightntwrk.github.io/servicedesk/> |
+
+⚠ **Check network health before a deploy session, not during one.** The `/api/health` endpoint
+on either Nethermind faucet returns the real state — testnets are reset and go out of service
+with some regularity. Measured 2026-08-17: preprod `{"status":"ok"}` while preview returned
+`{"status":"NOT_SERVING","reason":"SYNC_STUCK_RECOVERY"}`. Community advice about which network
+to prefer goes stale within days; the health endpoint does not.
+
+⚠ **Lace Midnight Preview (the standalone extension) is deprecated.** Midnight support is in
+the main Lace wallet now; `1AM` is the Midnight-native alternative.
+
+Report infrastructure problems through the service desk rather than chat — it is the monitored
+triage route.
+
+## Common errors (observed in the wild)
+
+Errors whose message points somewhere other than the cause. Each of these cost a real developer
+material time in the Midnight dev channels.
+
+**`Cannot read properties of undefined (reading 'ctor')`** — usually thrown from
+`findDeployedContract`, and it looks like the contract is missing or the address is wrong. It
+is neither. Two causes, in order of likelihood:
+1. **Mixed SDK majors.** `@midnight-ntwrk/midnight-js-contracts` and `midnight-js-protocol` (and
+   the rest of `midnight-js-*`) must be on the **same 4.x line**. Check every one of them.
+2. Passing the **raw compiled contract object** where a `CompiledContract` is required. Wrap it:
+   `CompiledContract.make(tag, ctor)`.
+
+**Wallet connects but never syncs / send greyed out** — see the DUST ordering note above. Also
+check you are on the current Lace, not the deprecated standalone Midnight Preview extension.
+
+**Deploy or sync hangs with no error** — check the network health endpoint before debugging your
+code. Testnet sync outages are common and present as your application being broken.
+
+**`1014` reject (dust contention)** — reported as potentially leaving a wallet's dust note
+marked spent indefinitely. If a wallet becomes stuck after a reject, a fresh wallet is the
+known workaround; report it to the service desk.
 
 ## Reference Material
 
@@ -336,7 +437,7 @@ For detailed information, consult:
 
 ## Examples
 
-29 examples (27 validated + 2 network-only). 151 circuits compiled, 182/182 tests passing, 30 contracts deployed on preprod:
+30 examples (27 validated + 2 network-only + 1 compiled-only). 151 circuits compiled, 182/182 tests passing on the original March run; re-verified 2026-08-17 on Compact 0.31.1 (29/29 compile) with 10/10 simulator suites / 69 tests passing. 30 contracts deployed on preprod:
 
 **Core Patterns:**
 - [Counter](examples/counter.md) — 3 circuits, 5/5 tests. Simplest contract, increment/decrement with ledger state.
@@ -373,6 +474,7 @@ For detailed information, consult:
 - [Micro-DAO](examples/micro-dao.md) — 7 circuits, 7/7 tests. Token-gated voting, treasury, governance.
 - [Contract Upgradability](examples/contract-upgradability.md) — V1: 3 + V2: 7 circuits, 8/8 tests. Migration pattern.
 - [Token Minting](examples/token-minting.md) — 3 circuits. Zswap coin creation (`mintShieldedToken`), preprod deployed.
+- [Native Shielded Token](examples/native-shielded-token.md) — 2 circuits. Contract-issued shielded token via OZ `NativeShieldedTokenCore`. ⚠ Documents the coin-info hazard: contract-minted coins create NO ciphertext, so the returned `ShieldedCoinInfo` is the recipient's only copy — drop it and the value is stranded permanently.
 - [Supply Chain](examples/supply-chain.md) — 4 circuits, 7/7 tests. Selective disclosure provenance tracking.
 
 ## Production References

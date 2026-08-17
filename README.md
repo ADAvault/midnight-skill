@@ -10,6 +10,38 @@ Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI codi
 
 All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0.15.0, ledger v8). Also compatible with Compact 0.29.0 (ledger v7). See gotcha #74 for migration guide.
 
+> ### ✅ Re-validated 2026-08-17 — all 29 examples compile on Compact 0.31.1
+>
+> Every published example was recompiled from source against the current compiler.
+>
+> | set | result |
+> |---|---|
+> | 10 standalone validation contracts | **10/10 PASS** |
+> | 19 remaining + new contracts | **19/19 PASS** |
+> | vendored OpenZeppelin `compact-contracts` | 9/10 — see below |
+>
+> **Toolchain:** `compact` CLI **0.5.1**, compiler **0.31.1**, `compact-runtime` **0.16.0**,
+> Midnight.js **4.1.1**, Node 1.0.1, Ledger 8.1.0.
+> ([support matrix](https://docs.midnight.network/relnotes/support-matrix))
+>
+> ⚠ `compact --version` reports the **CLI wrapper** (0.5.1), not the compiler (0.31.1). Easy
+> to confuse when checking which you are on.
+>
+> **🔴 Compact 0.31.0 has a soundness bug** that can silently drop a range constraint. Use
+> **0.31.1**+. If you deployed anything built with 0.31.0, diff the verifier key — source
+> review is explicitly *not* reliable for finding it. Details in `SKILL.md`.
+>
+> **Breaking changes found, and what they mean for older code:**
+> - `CoinInfo` is now an **unbound identifier** — hit by OZ's `archive/ShieldedToken.compact`,
+>   which upstream has already retired. Expected, not a regression, but relevant to anyone
+>   carrying older Zswap coin code.
+> - Zswap operators were **renamed**: `receive` → `receiveShielded`,
+>   `sendImmediate` → `sendImmediateShielded`. The compiler names the replacement in the error,
+>   so this migrates cleanly. All current examples already use the new names.
+>
+> The per-example **test counts** in the table below were measured in March against Compact
+> 0.29.0/0.30.0 and have not been re-run — only compilation was re-verified today.
+
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
 | [Counter](examples/counter.md) | 3 | 5/5 | Validated |
@@ -41,8 +73,9 @@ All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0
 | [Vesting](examples/vesting.md) | 4 | 8/8 | Validated |
 | [Revenue Sharing](examples/revenue-sharing.md) | 3 | 7/7 | Validated |
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
+| **[Native Shielded Token](examples/native-shielded-token.md)** | 2 | — | **Compiled 0.31.1** |
 
-**29/29 compile on Compact 0.30.0. 143 circuits. 29/29 simulator-validated on compact-runtime 0.15.0. 6 contracts deployed on v8 preprod.**
+**30 examples. 29/29 re-verified compiling on Compact 0.31.1 (2026-08-17); 10/10 test suites, 69 tests passing on compact-runtime 0.16.0. Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod.**
 
 Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`) that require the full network stack for circuit calls. Both compile and deploy successfully.
 
@@ -84,7 +117,7 @@ DUST is Midnight's fee token — generated continuously from tNight. Must regist
 - **Design patterns** — authentication, OZ composition, off-chain computation, circuit optimization
 - **Off-chain integration** — TypeScript SDK, wallet connectivity, provider pattern, deployment
 - **Gotchas** — compiler bugs, SDK pitfalls, proof server issues, design traps (sourced from Discord + real compilation)
-- **29 worked examples** — core patterns through DeFi, governance, identity, contract upgradability, and supply chain
+- **30 worked examples** — core patterns through DeFi, governance, identity, contract upgradability, supply chain, and native shielded tokens
 
 ## Installation
 
@@ -153,7 +186,8 @@ midnight-skill/
     ├── lottery.md             # Commit-reveal multi-party randomness
     ├── vesting.md             # Time-based tranche release schedule
     ├── revenue-sharing.md     # Private share allocations, ZK withdrawal
-    └── supply-chain.md        # Selective disclosure provenance tracking
+    ├── supply-chain.md        # Selective disclosure provenance tracking
+    └── native-shielded-token.md # Contract-minted shielded token + coin-info hazard
 ```
 
 ## Key Findings from Validation
@@ -178,6 +212,25 @@ The Ledger v8 release (March 2026) introduced significant SDK changes discovered
 - **`signRecipe` bug fixed** — wallet-sdk-facade 3.0.0 handles proof markers correctly (gotcha #76)
 - **`nativeToken()` trap** — use `unshieldedToken().raw` from ledger-v7 for balance lookups (gotcha #77)
 - **Private state encryption** — `levelPrivateStateProvider` now requires encryption config (gotcha #78)
+
+### 0.31.1 re-validation findings (August 2026)
+
+Re-compiling every example against Compact 0.31.1 surfaced these:
+
+- **`CoinInfo` is now an unbound identifier** — older Zswap coin code referencing it no longer
+  compiles. OpenZeppelin has moved the affected contract to `archive/`.
+- **Zswap operators renamed** — `receive` → `receiveShielded`, `sendImmediate` →
+  `sendImmediateShielded`. The compiler names the replacement in the error, so migration is
+  mechanical.
+- **`Opaque<"string">` cannot be constructed in Compact** — a string literal is `Bytes<N>` and
+  there is no cast between them. Names, symbols and descriptions must arrive as parameters from
+  TypeScript. OpenZeppelin's own mocks follow this pattern.
+- **Module prefixes concatenate, they do not dot** — `import "./X" prefix Token_` gives
+  `Token__mint(...)`, not `Token_._mint(...)`.
+- **`compact --version` reports the CLI, not the compiler** — CLI 0.5.1 ships compiler 0.31.1.
+  Easy to misread when checking which version you are on.
+- **Simulator API stable across `compact-runtime` 0.14 → 0.16** — test suites pinned at `^0.14.0`
+  pass unchanged against 0.16.0.
 
 ## Sources
 
