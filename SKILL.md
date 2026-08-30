@@ -286,10 +286,16 @@ Authoritative matrix: <https://docs.midnight.network/relnotes/support-matrix>
 | `@midnight-ntwrk/compact-runtime` | **0.16.0** |
 | Midnight.js (`midnight-js-*`) | **4.1.1** |
 | DApp Connector API | 4.0.1 |
-| Node | 1.0.1 |
+| Node | **1.0.2** (mainnet + preprod) · 1.0.1 (preview) |
 | Ledger | 8.1.0 |
-| Indexer | 4.3.3 |
+| Indexer | 4.3.3-hotfix (mainnet + preprod) · 4.3.5 (preview) |
 | Proof Server | 8.1.0 |
+
+⚠ **Node version now differs per network** — preview trails mainnet/preprod rather than
+leading it. Verified 2026-08-30 by asking each network directly:
+`curl -H 'Content-Type: application/json' -d '{"jsonrpc":"2.0","id":1,"method":"system_version","params":[]}' https://rpc.mainnet.midnight.network`
+returns `1.0.2-eb71e64e`; preview returns `1.0.1-5edf8ddd`. The live endpoint is the
+authority, not the release page — see the artifact-availability warning below.
 
 ⚠ **Keep every `@midnight-ntwrk/midnight-js-*` package on the same major line.** Mixing 3.x
 and 4.x produces `Cannot read properties of undefined (reading 'ctor')` — an error that looks
@@ -371,11 +377,55 @@ Measured from 13 contract deployments on preprod (March 2026):
 funded the wallet *before* designating, send tNight to yourself to create a new UTXO that will
 generate DUST. Getting this order wrong leaves the send option greyed out with no explanation.
 
+## ⚠ You cannot download the version the network is running (verified 2026-08-30)
+
+Node **1.0.2** runs on mainnet and preprod, but there is **no public 1.0.2 artifact**. Every
+documented channel disagrees, and each one looks authoritative on its own:
+
+| source | says |
+|---|---|
+| Live RPC `system_version` | **1.0.2**-eb71e64e (mainnet, preprod) |
+| Docs compatibility matrix | 1.0.2 (mainnet, preprod) |
+| GitHub **releases** | latest stable is **1.0.1**; 1.0.2 exists only as `alpha.1/2/3` |
+| Docker Hub `midnightnetwork/midnight-node` | stops at **0.12.1** (June 2025) |
+| Docs "set up a full node" guide | install **0.22.5** (April 2026) |
+| `midnight-node-docker` presets | `qanet`, `testnet-02` — **both retired networks** |
+
+**Practical consequences:**
+
+- **Do not build on `midnight-node-docker` for a current network.** Its only presets target
+  networks that no longer exist, and it has had no functional commit since March 2026. The
+  compose scaffold cannot reach preview/preprod/mainnet without being rewritten.
+- **The full-node guide installs a version four generations behind the network.** Following it
+  literally gives you 0.22.5 against a 1.0.2 chain.
+- **The newest tag is not the newest network.** `node-2.1.0-beta.1` (21 Aug 2026) is *ahead* of
+  what any network runs. Newest-tag-wins picks a beta that matches nothing.
+- **If you need to run a node**, take the latest stable release (`node-1.0.1`) and verify it
+  against the target chain, or ask in the service desk for the 1.0.2 artifact. Do not assume the
+  version in the announcement is downloadable.
+
+**Rule: read the version off the chain (`system_version`), never off a release page.** For
+anything that only *talks to* a node — DApps, indexers, monitoring — use the public RPC
+endpoints below and skip local node operation entirely.
+
 ## Networks (verified 2026-08-17)
 
-**Mainnet is live** — Node 1.0.0 from 20 Jul 2026, 1.0.1 from 29 Jul. It runs in **federated**
-mode: block production is operated by the foundation, and third-party validation has not opened.
-An Incentivised Testnet is expected to precede it.
+**Mainnet is live** — Node 1.0.0 from 20 Jul 2026, 1.0.1 from 29 Jul, **1.0.2 from 22 Aug**.
+It runs in **federated** mode: block production is operated by the foundation, and third-party
+validation has not opened. An Incentivised Testnet is expected to precede it.
+
+**Measured 2026-08-30, not inferred.** `sidechain_getAriadneParameters` across Cardano epochs
+640-653 returns, on both mainnet and preprod, **13 permissioned candidates and 0 registered
+(SPO) candidates** every epoch, with `dParameter = {numPermissionedCandidates: 0,
+numRegisteredCandidates: 0}`. So third-party validator registration is not merely
+undocumented — there is nothing registered on chain. Anyone planning to run a Midnight
+validator should treat that as the current state of the world.
+
+```bash
+curl -s -H 'Content-Type: application/json' \
+  -d '{"jsonrpc":"2.0","id":1,"method":"sidechain_getAriadneParameters","params":[652]}' \
+  https://rpc.mainnet.midnight.network
+```
 
 | | endpoint |
 |---|---|
