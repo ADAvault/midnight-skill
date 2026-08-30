@@ -50,7 +50,7 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 > | set | result |
 > |---|---|
 > | 10 standalone validation contracts | **10/10 suites, 69 tests PASS** |
-> | vendored OpenZeppelin `compact-contracts` | **10/10 files, 607 tests PASS** |
+> | vendored OpenZeppelin `compact-contracts` | **45/45 files, 1482 tests PASS** |
 >
 > **🔴 Do not `npm install @midnight-ntwrk/compact-runtime@latest`.** npm serves **0.19.0**,
 > but compiler 0.31.1 emits code targeting **0.16.0**, so `@latest` fails every contract at
@@ -67,8 +67,15 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 >   unchanged on 0.31.1.
 > - **Compiler 0.34.0 is available** (`compact list`) but the support matrix still names
 >   **0.31.1** as the tested version. Not adopted here; 0.31.1 remains the validated compiler.
-> - `compact-contracts` remains pinned to `compact-runtime` 0.14.0 and `ledger-v7` and passes as
->   such. It is the one suite not yet moved to 0.16.0.
+> - `compact-contracts` moved to `compact-runtime` **0.16.0** + **`ledger-v8` 8.1.0** by pulling
+>   upstream (which had already made the change), resolving the Ledger-v7 inconsistency.
+>
+> **⚠ OpenZeppelin changed its identity model** — party identity moved from
+> `Either<ZswapCoinPublicKey, ContractAddress>` to `Either<Bytes<32>, ContractAddress>`, where the
+> bytes are an account id (`persistentHash(secretKey)`) proved via a witness. `ZswapCoinPublicKey`
+> no longer appears in `FungibleToken` at all. Pre-mid-2026 contracts will not compile against the
+> current library. Migration notes and a worked example in `SKILL.md` and
+> [`examples/composition/`](examples/composition/).
 
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
@@ -103,7 +110,7 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 | **[Native Shielded Token](examples/native-shielded-token.md)** | 2 | — | **Compiled 0.31.1** |
 
-**30 examples. 29/29 re-verified compiling on Compact 0.31.1 (2026-08-17); 11/11 test suites re-run 2026-08-30 — 676 tests passing (69 standalone on compact-runtime 0.16.0 + 607 in `compact-contracts`). Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod.**
+**30 examples. 29/29 re-verified compiling on Compact 0.31.1 (2026-08-17); 11/11 test suites re-run 2026-08-30 — **1551 tests passing** (69 standalone on compact-runtime 0.16.0 + 1482 in `compact-contracts`). Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod.**
 
 Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`) that require the full network stack for circuit calls. Both compile and deploy successfully.
 

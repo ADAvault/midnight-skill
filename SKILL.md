@@ -215,6 +215,8 @@ if (opt.is_some) { const val = opt.value; }
 // Either (used for wallet-or-contract addresses)
 const wallet = left<ZswapCoinPublicKey, ContractAddress>(ownPublicKey());
 const contract = right<ZswapCoinPublicKey, ContractAddress>(kernel.self());
+// NB the OpenZeppelin Compact library no longer uses this shape for party identity —
+// it moved to account ids, Either<Bytes<32>, ContractAddress>. See below.
 
 // Hashing
 persistentHash<Vector<2, Bytes<32>>>([data1, data2]);    // SHA-256
@@ -345,6 +347,54 @@ versions, so a mismatch is loud and immediate rather than silently wrong.
 with `compactc` 0.31.1. The `midnight-js` 3.x → 4.x major bump caused no breakage in any of
 the 10 suites. Contracts written six months ago compiled unchanged on 0.31.1 — no Compact
 language regressions in that window.
+
+## ⚠ OpenZeppelin Compact: identity moved from coin public keys to account IDs
+
+If you have contracts written against `OpenZeppelin/compact-contracts` before ~mid-2026, they
+will not compile against the current library. The identity model changed:
+
+| | before | now |
+|---|---|---|
+| party identity | `Either<ZswapCoinPublicKey, ContractAddress>` | **`Either<Bytes<32>, ContractAddress>`** |
+| the `Bytes<32>` is | — | `persistentHash(secretKey)` — an **account id** |
+| authentication | implicit from `ownPublicKey()` | caller **proves knowledge of the secret key** via a witness |
+
+`ZswapCoinPublicKey` no longer appears in `FungibleToken` at all (verified 2026-08-30). Both
+`Ownable` and `FungibleToken` now identify parties by account id, and each declares its own
+witness:
+
+```
+witness wit_OwnableSK(): Bytes<32>;        // Ownable.compact
+witness wit_FungibleTokenSK(): Bytes<32>;  // FungibleToken.compact
+```
+
+`Ownable.assertOnlyOwner()` compares `persistentHash(wit_OwnableSK())` against the stored owner,
+so authorisation is a zero-knowledge proof of key possession rather than an address comparison.
+
+**Three things that will catch you migrating:**
+
+1. **Every call site is a compile error, not a silent bug.** The compiler names both the supplied
+   and declared types. That is the good case — fix them mechanically.
+2. **Supply EVERY module's witness.** Composing modules means composing witnesses. Missing one
+   does not fail at load; it fails at *every circuit call*, which looks like broken test logic
+   rather than missing wiring. Both factories read `privateState.secretKey`, so one secret key
+   serves both:
+   ```ts
+   const witnesses = { ...OwnableWitnesses(), ...FungibleTokenWitnesses() };
+   // and pass the key in private state:
+   createConstructorContext({ secretKey: OWNER_SK }, coinKeyEither.left)
+   ```
+3. **Build the account id the same way the contract does**, or `assertOnlyOwner` will reject a
+   caller that looks correct:
+   ```ts
+   const buildAccountIdHash = (sk: Uint8Array) =>
+     persistentHash(new CompactTypeVector(1, new CompactTypeBytes(32)), [sk]);
+   const ownerEither = { is_left: true, left: buildAccountIdHash(sk), right: { bytes: zeroBytes } };
+   ```
+
+A complete worked example composing FungibleToken + Ownable + Pausable — contract and passing
+test suite — is in [`examples/composition/`](examples/composition/). Verified 2026-08-30 against
+compiler 0.31.1 / `compact-runtime` 0.16.0 / `ledger-v8` 8.1.0.
 
 ## Testing
 

@@ -1,0 +1,61 @@
+// Skill validation: composing FungibleToken + Ownable + Pausable
+pragma language_version >= 0.23.0;
+
+import CompactStandardLibrary;
+
+import "../../FungibleToken" prefix FT_;
+import "../../../access/Ownable" prefix Ownable_;
+import "../../../security/Pausable" prefix Pausable_;
+
+export { ZswapCoinPublicKey, ContractAddress, Either };
+
+// Identity model: BOTH Ownable and FungibleToken identify parties by an ACCOUNT ID —
+// Either<Bytes<32>, ContractAddress>, where the Bytes<32> is persistentHash(secretKey).
+// Ownable authenticates the caller by having them prove knowledge of that secret key via
+// the wit_OwnableSK witness; FungibleToken uses the same identifier for balances.
+// (Earlier revisions of this library used ZswapCoinPublicKey for token holders. It no
+// longer appears in FungibleToken at all.)
+constructor(
+  initOwner: Either<Bytes<32>, ContractAddress>,
+  name: Opaque<"string">,
+  symbol: Opaque<"string">,
+  decimals: Uint<8>,
+  initialSupply: Uint<128>
+) {
+  Ownable_initialize(initOwner);
+  FT_initialize(name, symbol, decimals);
+  FT__mint(initOwner, initialSupply);
+}
+
+export circuit transfer(to: Either<Bytes<32>, ContractAddress>, value: Uint<128>): Boolean {
+  Pausable_assertNotPaused();
+  return FT_transfer(to, value);
+}
+
+export circuit approve(spender: Either<Bytes<32>, ContractAddress>, value: Uint<128>): Boolean {
+  Pausable_assertNotPaused();
+  return FT_approve(spender, value);
+}
+
+export circuit mint(to: Either<Bytes<32>, ContractAddress>, amount: Uint<128>): [] {
+  Ownable_assertOnlyOwner();
+  FT__mint(to, amount);
+}
+
+export circuit pause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__pause();
+}
+
+export circuit unpause(): [] {
+  Ownable_assertOnlyOwner();
+  Pausable__unpause();
+}
+
+export circuit balanceOf(account: Either<Bytes<32>, ContractAddress>): Uint<128> {
+  return FT_balanceOf(account);
+}
+
+export circuit totalSupply(): Uint<128> {
+  return FT_totalSupply();
+}
