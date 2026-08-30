@@ -8,7 +8,7 @@ Supports Claude Code, Cursor, Gemini CLI, VS Code Copilot, and 30+ other AI codi
 
 ## Compiler-Validated
 
-All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0.15.0, ledger v8). Also compatible with Compact 0.29.0 (ledger v7). See gotcha #74 for migration guide.
+All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` **0.16.0**, ledger v8). Also compatible with Compact 0.29.0 (ledger v7). See gotcha #74 for migration guide.
 
 > ### ✅ Re-validated 2026-08-17 — all 29 examples compile on Compact 0.31.1
 >
@@ -20,8 +20,8 @@ All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0
 > | 19 remaining + new contracts | **19/19 PASS** |
 > | vendored OpenZeppelin `compact-contracts` | 9/10 — see below |
 >
-> **Toolchain:** `compact` CLI **0.5.1**, compiler **0.31.1**, `compact-runtime` **0.16.0**,
-> Midnight.js **4.1.1**, Node 1.0.1, Ledger 8.1.0.
+> **Toolchain:** `compact` CLI **0.5.2**, compiler **0.31.1**, `compact-runtime` **0.16.0**,
+> Midnight.js **4.1.1**, Node **1.0.2** (mainnet + preprod; preview 1.0.1), Ledger 8.1.0.
 > ([support matrix](https://docs.midnight.network/relnotes/support-matrix))
 >
 > ⚠ `compact --version` reports the **CLI wrapper** (0.5.1), not the compiler (0.31.1). Easy
@@ -40,7 +40,35 @@ All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0
 >   so this migrates cleanly. All current examples already use the new names.
 >
 > The per-example **test counts** in the table below were measured in March against Compact
-> 0.29.0/0.30.0 and have not been re-run — only compilation was re-verified today.
+> 0.29.0/0.30.0; compilation only was re-verified on 2026-08-17. **The suites themselves were
+> re-run on 2026-08-30 — see below.**
+
+> ### ✅ Re-validated 2026-08-30 — all 11 suites re-run, 676 tests passing
+>
+> Not a recompile this time: every test suite was executed.
+>
+> | set | result |
+> |---|---|
+> | 10 standalone validation contracts | **10/10 suites, 69 tests PASS** |
+> | vendored OpenZeppelin `compact-contracts` | **10/10 files, 607 tests PASS** |
+>
+> **🔴 Do not `npm install @midnight-ntwrk/compact-runtime@latest`.** npm serves **0.19.0**,
+> but compiler 0.31.1 emits code targeting **0.16.0**, so `@latest` fails every contract at
+> load with `CompactError: Version mismatch: compiled code expects 0.16.0, runtime is 0.19.0`.
+> **The compiler decides the runtime version, not npm.** Full matrix in `SKILL.md`.
+>
+> **Changing the runtime means recompiling** — the expected version is baked into the generated
+> `contract/index.js`. Bumping the npm package alone always fails.
+>
+> Also confirmed:
+> - **`midnight-js` 3.x → 4.x is clean** — all 10 suites pass on `midnight-js-network-id` 4.1.1
+>   after being pinned at `^3.2.0` since March.
+> - **No Compact language regressions in six months** — March-era `.compact` sources compiled
+>   unchanged on 0.31.1.
+> - **Compiler 0.34.0 is available** (`compact list`) but the support matrix still names
+>   **0.31.1** as the tested version. Not adopted here; 0.31.1 remains the validated compiler.
+> - `compact-contracts` remains pinned to `compact-runtime` 0.14.0 and `ledger-v7` and passes as
+>   such. It is the one suite not yet moved to 0.16.0.
 
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
@@ -75,7 +103,7 @@ All examples compiled and tested against **Compact 0.30.0** (`compact-runtime` 0
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 | **[Native Shielded Token](examples/native-shielded-token.md)** | 2 | — | **Compiled 0.31.1** |
 
-**30 examples. 29/29 re-verified compiling on Compact 0.31.1 (2026-08-17); 10/10 test suites, 69 tests passing on compact-runtime 0.16.0. Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod.**
+**30 examples. 29/29 re-verified compiling on Compact 0.31.1 (2026-08-17); 11/11 test suites re-run 2026-08-30 — 676 tests passing (69 standalone on compact-runtime 0.16.0 + 607 in `compact-contracts`). Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod.**
 
 Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`) that require the full network stack for circuit calls. Both compile and deploy successfully.
 
@@ -230,7 +258,9 @@ Re-compiling every example against Compact 0.31.1 surfaced these:
 - **`compact --version` reports the CLI, not the compiler** — CLI 0.5.1 ships compiler 0.31.1.
   Easy to misread when checking which version you are on.
 - **Simulator API stable across `compact-runtime` 0.14 → 0.16** — test suites pinned at `^0.14.0`
-  pass unchanged against 0.16.0.
+  pass unchanged against 0.16.0. **But not to 0.19.0**: that version is ahead of every released
+  compiler and is rejected at load (verified 2026-08-30). 0.16.0 is the ceiling for compiler
+  0.31.1.
 
 ## Sources
 
