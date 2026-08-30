@@ -303,7 +303,48 @@ like a contract problem and is not. **Ledger v7 is no longer supported.**
 
 The simulator API used throughout this skill (`createConstructorContext`,
 `createCircuitContext`, `sampleContractAddress`) was **verified present in compact-runtime
-0.16.0** on 2026-08-17.
+0.16.0**, re-confirmed 2026-08-30 by running 10 contract suites (69 tests) against it.
+
+### ⚠ Never `npm install @midnight-ntwrk/compact-runtime@latest`
+
+**npm's `latest` tag is AHEAD of every released compiler.** As of 2026-08-30 npm serves
+`compact-runtime@0.19.0`, but the current compiler (`compactc` 0.31.1) emits code targeting
+**0.16.0**. Install `latest` and every contract fails the moment it loads:
+
+```
+CompactError: Version mismatch: compiled code expects 0.16.0, runtime is 0.19.0
+```
+
+**The compiler decides the runtime version, not npm.** Pin `compact-runtime` to the version in
+the compatibility matrix for your compiler and let nothing bump it — a caret range is fine
+within a 0.x minor, but `@latest` or a blind `npm update` will break the whole project.
+
+Measured 2026-08-30 across all 10 example contracts, which is how this was found:
+
+| configuration | result |
+|---|---|
+| compiled 0.14.0 + runtime 0.14.0 (as-was) | 10/10 pass |
+| compiled 0.14.0 + runtime **0.19.0** (`@latest`) | **10/10 fail** — expects 0.14.0, runtime is 0.19.0 |
+| recompiled 0.31.1 + runtime **0.19.0** | **10/10 fail** — expects 0.16.0, runtime is 0.19.0 |
+| recompiled 0.31.1 + runtime **0.16.0** | **10/10 pass** ✓ |
+
+⚠ **Changing the runtime version means RECOMPILING.** The version is baked into the generated
+`src/managed/<name>/contract/index.js` at compile time. Bumping the npm package alone always
+fails — you must re-run `compactc` and keep the runtime pin matched to it.
+
+The failure is at least a *good* one: the runtime version-gates on load and names both
+versions, so a mismatch is loud and immediate rather than silently wrong.
+
+**Verified compatible pairing (2026-08-30):**
+
+```json
+"@midnight-ntwrk/compact-runtime":      "^0.16.0",
+"@midnight-ntwrk/midnight-js-network-id": "^4.1.1"
+```
+
+with `compactc` 0.31.1. The `midnight-js` 3.x → 4.x major bump caused no breakage in any of
+the 10 suites. Contracts written six months ago compiled unchanged on 0.31.1 — no Compact
+language regressions in that window.
 
 ## Testing
 
