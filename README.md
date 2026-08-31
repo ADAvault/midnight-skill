@@ -52,10 +52,11 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 > | 10 standalone validation contracts | **10/10 suites, 69 tests PASS** |
 > | vendored OpenZeppelin `compact-contracts` | **45/45 files, 1482 tests PASS** |
 >
-> **🔴 Do not `npm install @midnight-ntwrk/compact-runtime@latest`.** npm serves **0.19.0**,
-> but compiler 0.31.1 emits code targeting **0.16.0**, so `@latest` fails every contract at
-> load with `CompactError: Version mismatch: compiled code expects 0.16.0, runtime is 0.19.0`.
-> **The compiler decides the runtime version, not npm.** Full matrix in `SKILL.md`.
+> **🔴 Do not `npm install @midnight-ntwrk/compact-runtime@latest`, and do not copy a version
+> out of a doc.** **The compiler decides the runtime version, not npm** — derive it with
+> `compact compile -- --runtime-version` and pin exactly that. Compiler 0.31.1 emits code for
+> **0.16.0**; compiler 0.34.0 emits code for **0.19.0**. Any mismatch fails at load with
+> `CompactError: Version mismatch`. Full matrix in `SKILL.md`.
 >
 > **Changing the runtime means recompiling** — the expected version is baked into the generated
 > `contract/index.js`. Bumping the npm package alone always fails.
@@ -264,10 +265,11 @@ Re-compiling every example against Compact 0.31.1 surfaced these:
   `Token__mint(...)`, not `Token_._mint(...)`.
 - **`compact --version` reports the CLI, not the compiler** — CLI 0.5.1 ships compiler 0.31.1.
   Easy to misread when checking which version you are on.
-- **Simulator API stable across `compact-runtime` 0.14 → 0.16** — test suites pinned at `^0.14.0`
-  pass unchanged against 0.16.0. **But not to 0.19.0**: that version is ahead of every released
-  compiler and is rejected at load (verified 2026-08-30). 0.16.0 is the ceiling for compiler
-  0.31.1.
+- **Simulator API stable across `compact-runtime` 0.14 → 0.19** — test suites pinned at `^0.14.0`
+  pass unchanged against 0.16.0. The ceiling is per-compiler, not absolute: 0.16.0 is right for
+  compiler 0.31.1 (verified 2026-08-30) and 0.19.0 is right for compiler 0.34.0 (verified
+  2026-08-31). Derive it with `compact compile -- --runtime-version` rather than pinning a
+  constant.
 
 ## Sources
 

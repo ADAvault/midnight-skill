@@ -309,17 +309,35 @@ The simulator API used throughout this skill (`createConstructorContext`,
 
 ### ⚠ Never `npm install @midnight-ntwrk/compact-runtime@latest`
 
-**npm's `latest` tag is AHEAD of every released compiler.** As of 2026-08-30 npm serves
-`compact-runtime@0.19.0`, but the current compiler (`compactc` 0.31.1) emits code targeting
-**0.16.0**. Install `latest` and every contract fails the moment it loads:
+**The compiler decides the runtime version, not npm.** Every compiler release bakes one
+expected `compact-runtime` version into its generated code. `@latest` is only correct when your
+compiler happens to be the newest one, and a hardcoded version from someone else's doc is only
+correct for *their* compiler. Both directions break the same way:
 
 ```
 CompactError: Version mismatch: compiled code expects 0.16.0, runtime is 0.19.0
 ```
 
-**The compiler decides the runtime version, not npm.** Pin `compact-runtime` to the version in
-the compatibility matrix for your compiler and let nothing bump it — a caret range is fine
-within a 0.x minor, but `@latest` or a blind `npm update` will break the whole project.
+Never hardcode the pin — derive it from the compiler you actually build with:
+
+```sh
+compact compile -- --runtime-version   # the only answer that cannot go stale
+```
+
+Pin `compact-runtime` to exactly that, and let nothing bump it — a caret range is fine within a
+0.x minor, but `@latest` or a blind `npm update` will break the whole project.
+
+Measured pairings (recompile after changing either side):
+
+| compiler | emits code for `compact-runtime` |
+|---|---|
+| 0.31.1 (2026-06-25) | **0.16.0** |
+| 0.34.0 (2026-08-25) | **0.19.0** |
+
+Note that `compact-runtime@0.19.0` was published the same day `compactc-v0.34.0` shipped — the
+compiler and runtime move as a matched pair, so npm running "ahead" is really just your local
+compiler running behind. `compact update` is a separate step from `compact self update`; it is
+easy to have a current CLI and a stale compiler.
 
 Measured 2026-08-30 across all 10 example contracts, which is how this was found:
 
