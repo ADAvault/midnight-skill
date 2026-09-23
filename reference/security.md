@@ -836,104 +836,81 @@ function showStateWarning() {
 
 ### 10. Version Mismatch Vulnerabilities
 
-**What:** Midnight's toolchain has multiple components that must be version-aligned:
-the Compact compiler, the SDK (`@midnight-ntwrk/*` npm packages), the proof server,
-and the network (devnet/testnet). Version misalignment causes silent failures —
-circuits compile but produce invalid proofs, proof servers reject valid proofs,
-or transactions fail on-chain with no clear error message.
+**What:** Midnight's components version independently and must be **paired**, not equalised.
+There is no single version number across them. A working ledger-8 set (it deployed on preprod on
+2026-09-23) is compiler 0.31.1 + `compact-runtime` 0.16.0 + Midnight.js 4.1.1 + `wallet-sdk` 1.2.0
+(facade 4.1.0) + `ledger-v8` 8.1.0 + proof server 8.1.0. A check that demands "every
+`@midnight-ntwrk` package at the same version" rejects every real set. Note that `compact --version`
+reports the CLI (0.5.x), not the compiler.
 
-**Example vulnerable configuration:**
+**Why it is a security issue, not just breakage:** the compiler decides what your circuits
+constrain. A compiler with a known soundness bug can emit circuits that are missing a constraint
+(see `SKILL.md` → the verifier-key diff check). A floating version (`^` ranges, `:latest` image tags,
+npm `latest` on a lagging scope) changes what you ship without a code change.
 
-```json
-{
-  "dependencies": {
-    "@midnight-ntwrk/compact-runtime": "0.18.0",
-    "@midnight-ntwrk/midnight-js-contracts": "0.20.0",
-    "@midnight-ntwrk/midnight-js-types": "0.19.0",
-    "@midnight-ntwrk/wallet-api": "0.20.0"
-  }
-}
-```
+**Failure modes:**
 
-```bash
-# Compiler version does not match SDK version
-compact --version   # 0.17.0
-# Proof server expects circuits from compiler 0.20.0
-# Result: proofs generate but are rejected by the network
-```
+| Mismatch | Symptom |
+|---|---|
+| runtime ≠ the compiler's | `CompactError: Version mismatch: compiled code expects 0.16.0, runtime is 0.19.0`. Loud, at load |
+| Midnight.js 3.x mixed with 4.x | `Cannot read properties of undefined (reading 'ctor')`. Looks like a contract bug |
+| compiler ahead of the network | 0.34 targets ledger 9. It compiles, but mainnet and preprod run ledger 8 (Midnight: "continue to use Compact toolchain 0.31.x") |
+| `proof-server:latest` | 8.1.0 today. It moves to 9.x when ledger 9 ships, possibly while your network is still on 8 |
+| unpinned wallet SDK | `npm install @midnight-ntwrk/wallet-sdk-facade` resolves to 4.0.1, the version upstream [midnight-wallet #704](https://github.com/midnightntwrk/midnight-wallet/issues/704) reports leaking to OOM on preprod. We measured the same failure on 3.0.0 (gotcha #80) |
 
-**Exploitation scenario:** A developer upgrades the SDK packages to 0.20.0 but
-forgets to update the Compact compiler. The contract compiles with the old compiler,
-producing circuits in the old format. The proof server (version 0.20.0) accepts the
-circuits but produces proofs that the new network rejects. All transactions fail
-silently — users lose gas fees and the dApp appears broken. In a worse case, a
-partially-compatible version combination produces valid-looking proofs that encode
-incorrect logic, leading to state corruption.
+**Mitigation — a check that encodes the real pairing rules** (run as `precompile` and before deploy):
 
-**Mitigation — strict version pinning and compatibility checks:**
+```javascript
+// scripts/check-midnight-versions.mjs — run before compile and deploy.
+// Midnight components are PAIRED, not equal: there is no single version number across them.
+import { execFileSync } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 
-```json
-{
-  "dependencies": {
-    "@midnight-ntwrk/compact-runtime": "0.20.0",
-    "@midnight-ntwrk/midnight-js-contracts": "0.20.0",
-    "@midnight-ntwrk/midnight-js-types": "0.20.0",
-    "@midnight-ntwrk/wallet-api": "0.20.0"
-  },
-  "scripts": {
-    "check-versions": "node scripts/check-midnight-versions.mjs",
-    "precompile": "npm run check-versions"
-  }
-}
-```
+const lock = JSON.parse(readFileSync('package-lock.json', 'utf8')).packages;
+const v = (name) => lock[`node_modules/${name}`]?.version;
+const fail = (msg) => {
+  console.error(`FAIL ${msg}`);
+  process.exitCode = 1;
+};
 
-```typescript
-// scripts/check-midnight-versions.mjs
-// GOOD — verify all Midnight packages are aligned before compile
-import { readFileSync } from "fs";
+// 1. compact-runtime must be the version YOUR compiler generates code for.
+const compiler = process.env.COMPACT_VERSION ?? '0.31.1';
+const out = execFileSync('compact', ['compile', `+${compiler}`, '--runtime-version']).toString();
+const expected = out.match(/\d+\.\d+\.\d+/)?.[0];
+const runtime = v('@midnight-ntwrk/compact-runtime');
+if (runtime !== expected) fail(`compact-runtime ${runtime} but compiler ${compiler} expects ${expected}`);
 
-const pkg = JSON.parse(readFileSync("package.json", "utf-8"));
-const midnightPackages = Object.entries(pkg.dependencies).filter(([name]) =>
-  name.startsWith("@midnight-ntwrk/"),
+// 2. Every midnight-js-* package on one version (3.x + 4.x mixed fails with "reading 'ctor'").
+const mjs = new Set(
+  Object.keys(lock)
+    .filter((k) => /(^|\/)node_modules\/@midnight-ntwrk\/midnight-js-[^/]+$/.test(k)) // incl. nested copies, not their deps
+    .map((k) => lock[k].version),
 );
+if (mjs.size !== 1) fail(`midnight-js versions differ: ${[...mjs].join(', ')}`);
 
-const versions = new Set(midnightPackages.map(([, version]) => version));
-if (versions.size > 1) {
-  console.error("VERSION MISMATCH in @midnight-ntwrk packages:");
-  midnightPackages.forEach(([name, version]) =>
-    console.error(`  ${name}: ${version}`),
-  );
-  console.error("All @midnight-ntwrk packages must use the same version.");
-  process.exit(1);
-}
+// 3. Wallet facade >= 4.1.0: 3.x/4.0.x cannot sync a fresh wallet on preprod (gotcha #80).
+const facade = v('@midnight-ntwrk/wallet-sdk-facade') ?? 'missing';
+const [maj, min] = facade.split('.').map(Number);
+if (!(maj > 4 || (maj === 4 && min >= 1))) fail(`wallet-sdk-facade ${facade} is older than 4.1.0`);
 
-// Check compiler version matches SDK
-import { execSync } from "child_process";
-const compilerVersion = execSync("compact --version").toString().trim();
-const sdkVersion = midnightPackages[0][1];
-if (!compilerVersion.includes(sdkVersion.replace(/^\^|~/, ""))) {
-  console.error(
-    `Compiler version (${compilerVersion}) does not match SDK (${sdkVersion})`,
-  );
-  console.error("Run: compact self update && compact update " + sdkVersion);
-  process.exit(1);
-}
-
-console.log(`All Midnight versions aligned at ${[...versions][0]}`);
+if (!process.exitCode) console.log(`OK compiler ${compiler} -> runtime ${expected}; midnight-js ${[...mjs][0]}; facade ${facade}`);
 ```
+
+Tested 2026-09-23 against real lockfiles. `example-bboard` → `OK compiler 0.31.1 -> runtime 0.16.0;
+midnight-js 4.1.1; facade 4.1.0`. Archived `example-counter` → fails on facade 3.0.0. The bboard lock
+with `COMPACT_VERSION=0.34.0` → fails (runtime 0.16.0, expects 0.19.0). A planted nested
+`midnight-js-types` 3.0.0 copy → fails as mixed. Match on the package's own path segment: a plain
+prefix match also catches `midnight-js-*/node_modules/<dependency>` and reports a false mismatch.
 
 **Key rules:**
-- Pin all `@midnight-ntwrk/*` packages to the exact same version. Do not use
-  `^` or `~` version ranges.
-- Update the Compact compiler, SDK packages, and proof server together as a
-  single atomic operation.
-- Run version compatibility checks in CI before compilation.
-- When upgrading, recompile all contracts and re-run the full test suite. Do not
-  assume backward compatibility between minor versions.
-- Track the Midnight release notes for breaking changes — the platform is
-  pre-mainnet and breaking changes are frequent.
-- Test against the same network version you will deploy to. A contract that
-  passes on devnet may fail on testnet if they run different versions.
+- Pair, don't equalise. Derive the runtime from the compiler, keep Midnight.js on one version, and
+  take the wallet SDK and `ledger-v8` from the same maintained example's lockfile.
+- Pin exact versions and commit the lockfile. Pin the proof-server image by version, and by digest
+  where you can.
+- Changing the compiler means recompiling. The runtime version is baked into the generated code.
+- After a compiler change on a deployed contract, diff the verifier keys before trusting the new
+  build (`SKILL.md`).
+- Test on the network you deploy to. Preview and preprod can run different node versions.
 
 ---
 

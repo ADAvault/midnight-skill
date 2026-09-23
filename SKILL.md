@@ -292,6 +292,13 @@ Authoritative matrix: <https://docs.midnight.network/relnotes/support-matrix>
 | Ledger | 8.1.0 |
 | Indexer | 4.3.3-hotfix (mainnet + preprod) · 4.3.5 (preview) |
 | Proof Server | 8.1.0 |
+| Wallet SDK | `@midnight-ntwrk/wallet-sdk` **1.2.0** (facade 4.1.0, dust-wallet 4.2.0, shielded 3.0.2) — added 2026-09-23 |
+
+⚠ **Wallet SDK: pin 1.2.0 / facade 4.1.0, and do not copy the archived `example-counter`'s wallet
+code.** Measured 2026-09-23: on facade 3.0.0 a fresh preprod sync grows the JS heap without bound
+(OOM even with a 10 GB cap). On facade 4.1.0 the same sync holds at ~200 MB. A bare
+`npm install @midnight-ntwrk/wallet-sdk-facade` still resolves to 4.0.1. Details, and how to
+measure sync progress: gotcha #80. Build wallets the way `example-bboard` does.
 
 ⚠ **Node version now differs per network** — preview trails mainnet/preprod rather than
 leading it. Verified 2026-08-30 by asking each network directly:
@@ -305,7 +312,8 @@ like a contract problem and is not. **Ledger v7 is no longer supported.**
 
 The simulator API used throughout this skill (`createConstructorContext`,
 `createCircuitContext`, `sampleContractAddress`) was **verified present in compact-runtime
-0.16.0**, re-confirmed 2026-08-30 by running 10 contract suites (69 tests) against it.
+0.16.0**, re-confirmed 2026-08-30 by running 10 contract suites (69 tests) against it, and again
+2026-09-23 on Node 22. **It changed in 0.19** — see *Compiler 0.34 / compact-runtime 0.19* below.
 
 ### ⚠ Never `npm install @midnight-ntwrk/compact-runtime@latest`
 
@@ -321,18 +329,23 @@ CompactError: Version mismatch: compiled code expects 0.16.0, runtime is 0.19.0
 Never hardcode the pin — derive it from the compiler you actually build with:
 
 ```sh
-compact compile -- --runtime-version   # the only answer that cannot go stale
+compact compile +0.31.1 --runtime-version   # a specific installed compiler -> 0.16.0
+compact compile -- --runtime-version        # the DEFAULT compiler only
 ```
+
+Use the `+<version>` form whenever more than one compiler is installed: the `--` form answers for
+whichever compiler is the default, which need not be the one your build uses. (Both verified
+2026-09-23 against compilers 0.31.1 and 0.34.0.)
 
 Pin `compact-runtime` to exactly that, and let nothing bump it — a caret range is fine within a
 0.x minor, but `@latest` or a blind `npm update` will break the whole project.
 
 Measured pairings (recompile after changing either side):
 
-| compiler | emits code for `compact-runtime` |
-|---|---|
-| 0.31.1 (2026-06-25) | **0.16.0** |
-| 0.34.0 (2026-08-25) | **0.19.0** |
+| compiler | emits code for `compact-runtime` | targets | deployable today |
+|---|---|---|---|
+| 0.31.1 (2026-06-25) | **0.16.0** | ledger 8 | ✅ mainnet, preprod |
+| 0.34.0 (2026-08-25) | **0.19.0** | ledger 9 | ❌ not yet — see below |
 
 Note that `compact-runtime@0.19.0` was published the same day `compactc-v0.34.0` shipped — the
 compiler and runtime move as a matched pair, so npm running "ahead" is really just your local
@@ -347,6 +360,26 @@ Measured 2026-08-30 across all 10 example contracts, which is how this was found
 | compiled 0.14.0 + runtime **0.19.0** (`@latest`) | **10/10 fail** — expects 0.14.0, runtime is 0.19.0 |
 | recompiled 0.31.1 + runtime **0.19.0** | **10/10 fail** — expects 0.16.0, runtime is 0.19.0 |
 | recompiled 0.31.1 + runtime **0.16.0** | **10/10 pass** ✓ |
+
+### Compiler 0.34 / `compact-runtime` 0.19 — ledger 9, not yet deployable
+
+Midnight's 0.34.0 release notes: *"This release works with a Midnight ledger 9 blockchain…
+Ledger version 9 will be, but is not yet, deployed on Midnight Mainnet. If you are building
+contracts to be deployed to the current Midnight Mainnet, you should continue to use Compact
+toolchain 0.31.x."* Build with 0.34 only to prepare for ledger 9. What changes when you do,
+measured 2026-09-23 against this skill's 10 validation suites:
+
+- **`createCircuitContext` takes a circuit id first.** 0.16:
+  `createCircuitContext(contractAddress, zswapState, contractState, privateState)`. 0.19:
+  `createCircuitContext(circuitId, contractAddress, zswapState, contractState, …)`. Unchanged call
+  sites fail at load with `CompactError: 'contractState' parameter undefined has unexpected type`
+  — all 10 suites fail this way. The context is now bound to one circuit, and its shape changed
+  (`context.callContext.currentQueryContext`, charged state, gas cost).
+- **Node ≥ 20.19.** `compact-runtime` 0.19 depends on `@noble/curves` / `@noble/hashes` 2.x, which
+  are ESM-only and declare `node >= 20.19.0`. Node 18 fails.
+- **New on-chain runtime.** 0.19 builds on `@midnightntwrk/onchain-runtime-v4` — a release
+  candidate, under the new npm scope `@midnightntwrk` — not `@midnight-ntwrk/onchain-runtime-v3`.
+- Compilation is not the problem: all 29 standalone examples compile unchanged on 0.34.0.
 
 ⚠ **Changing the runtime version means RECOMPILING.** The version is baked into the generated
 `src/managed/<name>/contract/index.js` at compile time. Bumping the npm package alone always
@@ -540,8 +573,8 @@ curl -s -H 'Content-Type: application/json' \
 |---|---|
 | mainnet RPC | `https://rpc.mainnet.midnight.network/` |
 | mainnet indexer | `https://indexer.mainnet.midnight.network/api/v4/graphql` |
-| **preprod faucet** | `https://midnight-tmnight-preprod.nethermind.dev/` |
-| **preview faucet** | `https://midnight-tmnight-preview.nethermind.dev/` |
+| **preprod faucet** | `https://faucet.preprod.midnight.network/` (official; alternative: `https://midnight-tmnight-preprod.nethermind.dev/`) |
+| **preview faucet** | `https://faucet.preview.midnight.network/` (official; alternative: `https://midnight-tmnight-preview.nethermind.dev/`) |
 | status | `https://status.shielded.tools/preprod` · `/preview` |
 | service desk | <https://midnightntwrk.github.io/servicedesk/> |
 
@@ -650,8 +683,9 @@ Open-source Midnight contracts and tools for studying real implementations:
 - [midnight-rwa](https://github.com/bricktowers/midnight-rwa) — Real-world asset tokenization.
 
 **Official Midnight Examples:**
-- [example-counter](https://github.com/midnightntwrk/example-counter) — Official counter (simplest contract). Template for `create-mn-app`.
-- [example-bboard](https://github.com/midnightntwrk/example-bboard) — Official bulletin board. Canonical witness + auth pattern.
+- [example-bboard](https://github.com/midnightntwrk/example-bboard) — Official bulletin board and **maintained**: Midnight.js 4.1.1, wallet SDK 1.2.0, `language_version 0.23` (compiler 0.31.x, ledger 8), Node ≥ 24.11.1. Canonical witness + auth pattern. Start here, but strip its seed logging (gotcha #81).
+- [example-counter](https://github.com/midnightntwrk/example-counter) — Official counter, **archived 2026-08-14**. Its contract and simulator code still work. Its wallet stack (facade 3.0.0) cannot sync a fresh wallet on preprod (gotcha #80).
+- [create-mn-app](https://github.com/midnightntwrk/create-mn-app) — Maintained scaffolder (0.5.1). Templates: `hello-world` (built in; pins wallet-sdk 1.2.0, Midnight.js 4.1.1, compact-runtime 0.16.0), `bboard`, `battleship`, `leaderboard`. The counter is no longer a template. (Checked 2026-09-23.)
 - [midnight-awesome-dapps](https://github.com/midnightntwrk/midnight-awesome-dapps) — Curated list of community dApps.
 
 **Community Projects:**

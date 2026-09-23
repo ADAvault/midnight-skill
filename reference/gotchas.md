@@ -340,19 +340,41 @@ compact update 0.28.0        # 2. THEN update the toolchain version
 
 ## Proof Server Gotchas
 
-### 21. Docker command quoting
+### 21. The image's entrypoint is `bash -c` — flags passed as separate arguments are silently dropped
 
-The `--network` flag in docker-compose requires careful quoting.
+`midnightntwrk/proof-server` 8.x has entrypoint `bash -c` and default command
+`midnight-proof-server --port $PORT` (`PORT=6300`). `bash -c` runs only its first argument; the
+rest become positional parameters. So `docker run IMAGE midnight-proof-server --port 6301` starts
+a server on **6300** and ignores the flag without an error. The usual form
+`... midnight-proof-server --port 6300` works only because 6300 is the default. Verified on 8.1.0,
+2026-09-23: separate arguments → listened on 6300; the same flags as one string → 6301.
 
-```yaml
-# BAD — flag not recognized
-command: midnight-proof-server --network testnet
+```bash
+# The default command is enough. Bind to loopback: the proof server receives private inputs.
+docker run -d -p 127.0.0.1:6300:6300 midnightntwrk/proof-server:8.1.0
 
-# GOOD — wrap entire command in single quotes
-command: "'midnight-proof-server --network testnet'"
+# Flags: pass the whole command as ONE argument ...
+docker run -d -p 127.0.0.1:6300:6300 midnightntwrk/proof-server:8.1.0 'midnight-proof-server --port 6300 -v'
+# ... or change the port through the variable the default command reads
+docker run -d -e PORT=6301 -p 127.0.0.1:6301:6301 midnightntwrk/proof-server:8.1.0
 ```
 
-This is a Docker/shell escaping issue, not a proof server issue.
+```yaml
+# docker-compose: a list holding ONE string (what example-counter used)
+command: ['midnight-proof-server -v']
+# BAD: compose splits this into separate arguments and -v is dropped
+command: midnight-proof-server -v
+```
+
+8.1.0 options: `--port`, `-v`, `--job-capacity`, `--num-workers` (default 2), `--job-timeout`
+(default 600), `--no-fetch-params`, each also settable as `MIDNIGHT_PROOF_SERVER_*`. `--network` is
+gone: passed properly it fails with `unexpected argument '--network'`, and passed as a separate
+argument it is silently ignored. At startup the server downloads its parameters (k=10–15) and the
+Zswap/Dust keys from `https://srs.midnight.network/` and verifies them, so it needs outbound HTTPS.
+Use `--no-fetch-params` only if they are already provisioned.
+
+Pin the image to the ledger you target (`8.1.0` for ledger 8). `:latest` is 8.1.0 today (verified
+by digest, 2026-09-23), but it will move to 9.x when ledger 9 ships, possibly before mainnet does.
 
 ### 22. 400 Bad Request with no useful error
 
@@ -961,17 +983,32 @@ const recipe = await wallet.transferTransaction(
 
 Discovered during LOKx tNight transfer on preprod (March 2026).
 
-### 60. No balance-by-address query in the Midnight indexer
+### 60. Unshielded balances are public by address; shielded and DUST balances need keys
 
-The Midnight preprod indexer GraphQL schema has no query for checking an address's token balance. The only way to check balances is through a full wallet SDK sync:
+There is no `balance(address)` **query**. But the indexer's `unshieldedTransactions(address)`
+**subscription** returns any address's unshielded UTXOs with no keys: owner, token type, value, and
+whether each is registered for DUST generation. That subscription is what the unshielded wallet syncs
+from, starting from a public key only. Verified 2026-09-23 on preprod: a keyless subscription for a
+funded address returned its 5,000 tNight UTXO (`value: "5000000000"`,
+`registeredForDustGeneration: false`).
 
-```typescript
-const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter(s => s.isSynced)));
-const tNight = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
-const dust = state.dust.walletBalance(new Date());
+```graphql
+subscription { unshieldedTransactions(address: "mn_addr_preprod1...") {
+  ... on UnshieldedTransaction { createdUtxos { tokenType value registeredForDustGeneration } spentUtxos { value } }
+  ... on UnshieldedTransactionsProgress { highestTransactionId } } }
 ```
 
-This means you cannot check a third party's balance without their secret key. API designs that need balance checks must use the wallet SDK, not the indexer.
+The first event is a progress marker, so don't stop on it. Shielded and DUST balances need the
+owner's keys and a wallet sync:
+
+```typescript
+const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
+const tNight = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
+const dust = state.dust.balance(new Date()); // facade 3.0.0+ (1.0.0: walletBalance)
+```
+
+Privacy consequence: unshielded NIGHT holdings, and whether they are generating DUST, are visible to
+anyone who has the address.
 
 ### 61. Shielded addresses use different bech32m format from unshielded
 
@@ -1294,7 +1331,7 @@ Compact 0.30.0 targets Ledger v8. Contracts compiled for v7 will NOT work on v8 
 
 **Breaking changes:** `NativePoint` → `JubjubPoint` (use `compact fixup` to auto-rename). `persistentHash`/`persistentCommit` on `Opaque` values is now a compiler error.
 
-**Official v8 compatibility matrix (from docs.midnight.network/relnotes/overview, March 2026):**
+**Official v8 compatibility matrix at the v8 release (docs.midnight.network/relnotes/overview, March 2026)** — historical; the current matrix is in `SKILL.md` → *Current versions*:
 
 | Component | Version |
 |-----------|---------|
@@ -1309,19 +1346,21 @@ Compact 0.30.0 targets Ledger v8. Contracts compiled for v7 will NOT work on v8 
 | Wallet SDK Facade | 3.0.0 |
 | DApp Connector API | 4.0.1 |
 
-**Note:** The official counter example (midnightntwrk/example-counter) still uses older versions (midnight-js 3.0.0, wallet-sdk-facade 1.0.0, compact-runtime 0.14.0, ledger-v7 imports). Both version sets work on the v8 network. The compatibility matrix versions are the officially recommended ones.
+**Note:** `midnightntwrk/example-counter` is **archived** (2026-08-14). Its final version pins wallet-sdk-facade 3.0.0, `ledger-v8` 8.0.3 and Midnight.js 4.0.x. Its contract and simulator code still work, but **its wallet stack cannot sync a fresh wallet on preprod** (gotcha #80). Take wallet code from the maintained `example-bboard`: `@midnight-ntwrk/wallet-sdk` 1.2.0 (facade 4.1.0), `ledger-v8` 8.1.0, Midnight.js 4.1.1, compiler 0.31.x. Do not mix Midnight.js 3.x and 4.x packages.
 
-**WalletFacade construction:**
+**WalletFacade construction:** the constructor is **private** on facade 3.0.0 and 4.1.0 (both d.ts checked 2026-09-23), so `new WalletFacade(shielded, unshielded, dust)`, the 1.0.0-era form, does not compile. Use the static `WalletFacade.init(...)`, or `FluentWalletBuilder` from `@midnight-ntwrk/testkit-js` as `example-bboard` does:
 
 ```typescript
-// 3-arg constructor (works with wallet-sdk-facade 1.0.0 and 3.0.0)
-const wallet = new WalletFacade(shieldedWallet, unshieldedWallet, dustWallet);
-await wallet.start(shieldedSecretKeys, dustSecretKey);
+const { wallet, seeds } = await FluentWalletBuilder.forEnvironment(env)
+  .withDustOptions({ ledgerParams: LedgerParameters.initialParameters(), additionalFeeOverhead: 1_000n, feeBlocksMargin: 5 })
+  .withSeed(seedHex)
+  .buildWithoutStarting();
+await wallet.start(ZswapSecretKeys.fromSeed(seeds.shielded), DustSecretKey.fromSeed(seeds.dust));
 ```
 
-The constructor takes three sub-wallets (ShieldedWallet, UnshieldedWallet, DustWallet), each configured independently. See offchain.md for full setup pattern.
+Verified on preprod 2026-09-23: the same hex seed gives the same unshielded address on both stacks (so a funded wallet carries over). `WalletFacade.init({ configuration, shielded, unshielded, dust })` also exists in 4.1.0; archived example-counter used it on 3.0.0. See offchain.md for the full setup.
 
-**Proof server:** Docker `midnightntwrk/proof-server:8.0.3`. The `--network` flag is no longer accepted. Run: `docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.3 midnight-proof-server --port 6300`. Remote proof servers via Lace are currently unavailable — run locally.
+**Proof server:** `midnightntwrk/proof-server:8.1.0` for ledger 8. Run `docker run -d -p 127.0.0.1:6300:6300 midnightntwrk/proof-server:8.1.0`. The default command already sets the port, and extra arguments are silently dropped (gotcha #21). Remote proof servers via Lace are currently unavailable, so run it locally.
 
 **Key fix:** Issue #151 (`sendUnshielded`/`receiveUnshielded` circuit call failures) is resolved. Wallet→contract unshielded transfers work on v8.
 
@@ -1331,39 +1370,45 @@ The constructor takes three sub-wallets (ShieldedWallet, UnshieldedWallet, DustW
 
 NIGHT tokens generate DUST (the fee token) over time, but only after UTxOs are explicitly registered for dust generation via an on-chain transaction. Without DUST, all contract deployments and circuit calls fail with `Wallet.InsufficientFunds: could not balance dust`.
 
-Registration flow:
+Registration flow (facade 4.1.0, as `example-bboard` does it):
 
 ```typescript
 const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
 
-// 1. Check if dust already available
-if (state.dust.availableCoins.length > 0 && state.dust.walletBalance(new Date()) > 0n) return;
+// 1. Unregistered NIGHT UTXOs
+const nightUtxos = state.unshielded.availableCoins.filter((c) => !c.meta.registeredForDustGeneration);
 
-// 2. Filter unregistered NIGHT coins
-const nightUtxos = state.unshielded.availableCoins.filter(
-  (coin) => coin.meta?.registeredForDustGeneration !== true,
-);
-
-// 3. Register
+// 2. Register. The optional 4th argument (3.0.0 and 4.1.0) names the DUST receiver.
 if (nightUtxos.length > 0) {
+  const dustState = await wallet.dust.waitForSyncedState();
   const recipe = await wallet.registerNightUtxosForDustGeneration(
-    nightUtxos, unshieldedKeystore.getPublicKey(),
-    (payload) => unshieldedKeystore.signData(payload),
+    nightUtxos,
+    keystore.getPublicKey(),
+    (payload) => keystore.signData(payload),
+    dustState.address,
   );
-  const finalized = await wallet.finalizeRecipe(recipe);
-  await wallet.submitTransaction(finalized);
+  await wallet.submitTransaction(await wallet.finalizeRecipe(recipe));
 }
 
-// 4. Wait for dust to accrue
-await Rx.firstValueFrom(wallet.state().pipe(
-  Rx.throttleTime(5_000),
-  Rx.filter((s) => s.isSynced && s.dust.walletBalance(new Date()) > 0n),
-));
+// 3. Wait for DUST to accrue
+await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.dust.balance(new Date()) > 0n)));
 ```
 
-DUST economics: 5 DUST per NIGHT, ~1 week to reach cap, 3-hour grace period after backing NIGHT is spent.
+On 4.1.0, `estimateRegistration(utxos)` and `waitForGeneratedDust(utxos, amount)` let you defer
+registration until the UTXOs' accrued DUST covers the registration's own fee. Without them a
+registration can be rejected with `BalanceCheckOverspend`; 4.1.0 now throws before submitting.
 
-**Facade version differences:** The dust balance check above uses the facade 1.0.0 API (`s.dust.walletBalance`). In facade 3.0.0 the path is `s.dust.state.state.walletBalance(new Date())` (WASM object).
+DUST economics: 5 DUST per NIGHT, ~1 week to reach cap, 3-hour grace period after backing NIGHT is spent.
+1 DUST = 10^15 base units.
+
+**Generation is backdated to when the NIGHT arrived.** Measured 2026-09-23: 5,000 tNight received
+1 h 48 min before registration showed **268.68 DUST the moment registration landed**, which is
+exactly 1 h 48 min of generation. It then accrued at 0.0407 DUST/s, matching 5 DUST per NIGHT over a
+week. NIGHT that has been held for a while can pay for a deploy immediately. Freshly received NIGHT
+has almost nothing to spend.
+
+**Facade version differences:** DUST balance is `s.dust.balance(new Date())` on facade 3.0.0 and
+4.1.0 (the official examples use it on both). Facade 1.0.0 had `s.dust.walletBalance(t)`.
 
 **Known issue:** If a transaction fails after DUST is allocated for balancing, the DUST coins become stuck in a "pending" state. Restart the wallet to recover them.
 
@@ -1425,29 +1470,27 @@ const balance = state.unshielded.balances[unshieldedToken().raw]; // actual bala
 
 ### 78. levelPrivateStateProvider Requires Encryption Config
 
-Since midnight-js 3.0.0, `levelPrivateStateProvider` requires encryption configuration. Passing neither `walletProvider` nor `privateStoragePasswordProvider` throws at runtime:
-
-```
-Either privateStoragePasswordProvider or walletProvider must be provided
-```
-
-Provide exactly ONE of:
+**midnight-js 4.1.1** (checked 2026-09-23): the config takes **both** an `accountId` and a
+`privateStoragePasswordProvider`. There is no `walletProvider` option any more. Without an
+`accountId` it throws `accountId is required`. The password must be at least 16 characters, use at
+least 3 character classes, and have no more than 3 identical characters in a row. The storage key is
+derived with PBKDF2 at 600,000 iterations.
 
 ```typescript
-// Recommended — uses wallet's encryption public key
 levelPrivateStateProvider({
   privateStateStoreName: 'myStore',
-  walletProvider: walletAndMidnightProvider,
-});
-
-// Alternative — custom password (minimum 16 characters)
-levelPrivateStateProvider({
-  privateStateStoreName: 'myStore',
-  privateStoragePasswordProvider: () => 'min-16-char-password',
+  signingKeyStoreName: 'myStore-signing-keys',
+  accountId: coinPublicKey,                        // hashed (SHA-256, first 32 chars) into store names
+  privateStoragePasswordProvider: () => password,  // from a secret store; never a literal in code
 });
 ```
 
-Providing BOTH also throws an error.
+The `accountId` scopes state per account. Stores created before scoping migrate with
+`migrateToAccountScoped`. `example-bboard` passes the wallet seed as `accountId` and a hard-coded
+password (gotcha #81). Don't copy either.
+
+*midnight-js 3.0.0* took exactly one of `walletProvider` or `privateStoragePasswordProvider`
+(`Either privateStoragePasswordProvider or walletProvider must be provided`).
 
 **WARNING:** `levelPrivateStateProvider` has no recovery mechanism. Clearing browser cache or deleting local files permanently destroys private state.
 
@@ -1494,8 +1537,50 @@ const ledgerState = mod.ledger(result.context.currentQueryContext.state);
 // Chain state: result.context (use as next circuit's context)
 ```
 
-**Circuit context creation remains 4-arg** (with 3 optional):
-`createCircuitContext(contractAddress, zswapLocalState, contractState, privateState, gasLimit?, costModel?, time?)`
+**Circuit context creation remains 4-arg** (with 3 optional) through 0.16:
+`createCircuitContext(contractAddress, zswapLocalState, contractState, privateState, gasLimit?, costModel?, time?)`.
+0.19 puts a circuit id first — see `SKILL.md` → *Compiler 0.34 / compact-runtime 0.19*.
+
+### 80. A fresh wallet cannot sync preprod on the archived example's wallet stack
+
+Measured 2026-09-23. One seed was synced from scratch against public preprod on each stack. Preprod
+held ~1.55M ledger events (`maxId` from the indexer's `zswapLedgerEvents` / `dustLedgerEvents`
+subscriptions).
+
+| | archived `example-counter` | maintained `example-bboard` |
+|---|---|---|
+| wallet stack | facade 3.0.0 · shielded 2.1.0 · dust-wallet 3.0.0 · `ledger-v8` 8.0.3 | `wallet-sdk` 1.2.0 = facade 4.1.0 · shielded 3.0.2 · dust-wallet 4.2.0 · `ledger-v8` 8.1.0 |
+| JS heap | 5 GB within ~70 s, then +6–7 MB/s; OOM at the 4 GB default and again with a 10 GB cap | flat, 130–290 MB |
+| shielded events | ~480/s | tip reached in ~3 min |
+| Dust events | ~7/s, CPU-bound | ~320/s average |
+| result | cannot finish | synced in 79.7 min, then registered DUST, deployed and called (below) |
+
+Upstream: [midnight-wallet #704](https://github.com/midnightntwrk/midnight-wallet/issues/704) (heap
+grows linearly with `appliedIndex`, OOM on preprod) and
+[#436](https://github.com/midnightntwrk/midnight-wallet/issues/436) (cold sync on facade 3.0.0 /
+dust-wallet 3.0.0 crashes deterministically at Dust event 565975). Both were open at the time of
+writing. Raising `--max-old-space-size` does not rescue the old stack. Changing the stack does:
+on dust-wallet 4.2.0 / `ledger-v8` 8.1.0 the sync passed event 565975 with no error and a flat heap.
+
+- **You cannot read progress from the wallet.** `highestIndex` stays 0 on both stacks. Compare
+  `appliedIndex` with the indexer's `maxId` instead:
+  `subscription { dustLedgerEvents(id: 0) { id maxId } }` (and `zswapLedgerEvents`). Facade 4.x
+  moved progress to `state.shielded.state.progress` / `state.dust.state.progress`, while
+  `state.unshielded.progress` is unchanged.
+- **Budget for the Dust stream.** It dominates a fresh sync: 79.7 min end to end on 2026-09-23, of
+  which shielded took ~3 min. DUST registration, deploy and one call then took ~90 s together
+  (deploy 21 s, call 24 s).
+- The start-up lines `RPC-CORE: subscribeRuntimeVersion(): ... disconnected ... 1000:: Normal Closure`
+  are noise. They appear on healthy syncs too.
+
+### 81. The official example logs your wallet seed
+
+`example-bboard`'s `MidnightWalletProvider.build` (`bboard-cli/src/midnight-wallet-provider.ts`) logs
+`Your wallet seed is: <master seed>` at info level, to the console and to the pino log file. The same
+CLI hard-codes the private-state password (`'Bboard-Test-2026!'`) and passes the seed as `accountId`.
+The level provider hashes `accountId` before using it in store names. This is fine for a throwaway
+preprod wallet. Before the code touches anything of value, delete the log line and use a random or
+keystore-derived password. (Checked at bboard commit `38bfac8`, 2026-08-25.)
 
 ---
 
@@ -1503,8 +1588,9 @@ const ledgerState = mod.ledger(result.context.currentQueryContext.state);
 
 > **WARNING:** Midnight is pre-mainnet software. APIs, syntax, and tooling
 > change between versions. The gotchas above were confirmed from early 2025
-> through March 2026 (Compact toolchain 0.25.x-0.30.x range). The v8 release
-> (Ledger 8.0.3, March 2026) is the current target for both Preview and PreProd.
+> through March 2026 (Compact toolchain 0.25.x-0.30.x range), with later entries
+> dated where they were verified. Ledger 8 (8.1.0, proof server 8.1.0) is the
+> current target for mainnet and preprod; ledger 9 is announced, not deployed.
 > Always check the latest release
 > notes, as some of these issues may be fixed in newer versions.
 

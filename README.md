@@ -54,7 +54,7 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 >
 > **🔴 Do not `npm install @midnight-ntwrk/compact-runtime@latest`, and do not copy a version
 > out of a doc.** **The compiler decides the runtime version, not npm** — derive it with
-> `compact compile -- --runtime-version` and pin exactly that. Compiler 0.31.1 emits code for
+> `compact compile +<version> --runtime-version` and pin exactly that. Compiler 0.31.1 emits code for
 > **0.16.0**; compiler 0.34.0 emits code for **0.19.0**. Any mismatch fails at load with
 > `CompactError: Version mismatch`. Full matrix in `SKILL.md`.
 >
@@ -77,6 +77,22 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 > no longer appears in `FungibleToken` at all. Pre-mid-2026 contracts will not compile against the
 > current library. Migration notes and a worked example in `SKILL.md` and
 > [`examples/composition/`](examples/composition/).
+
+> ### ✅ Re-validated 2026-09-23 — preprod deploy on the maintained stack
+>
+> | check | result |
+> |---|---|
+> | 29 examples compile, compiler 0.31.1 and 0.34.0 | **29/29** on both |
+> | 10 standalone suites, 0.31.1 + runtime 0.16.0 | **10/10 PASS** |
+> | same suites, 0.34.0 + runtime 0.19.0 | **0/10**: `createCircuitContext` takes a circuit id first in 0.19 |
+> | `example-bboard` on preprod, fresh wallet | **deployed + called** (sync 79.7 min, deploy 21 s, call 24 s) |
+> | archived `example-counter` wallet stack, same sync | **cannot finish**: heap OOM (gotcha #80) |
+>
+> Fixed in this round: the proof-server command silently dropped flags (gotcha #21). The version
+> check in `security.md` rejected every real package set. The wallet setup code used removed APIs
+> and `ledger-v7`. The `.npmrc` pointed at a registry that does not resolve. Unshielded balances are
+> public by address, not key-gated (gotcha #60). 0.34.0 targets ledger 9, which mainnet and
+> preprod do not run yet, so **0.31.1 remains the compiler to deploy with**.
 
 | Example | Circuits | Tests | Status |
 |---------|----------|-------|--------|
@@ -111,11 +127,30 @@ All examples compiled and tested against **Compact 0.31.1** (`compact-runtime` *
 | [Supply Chain](examples/supply-chain.md) | 4 | 7/7 | Validated |
 | **[Native Shielded Token](examples/native-shielded-token.md)** | 2 | — | **Compiled 0.31.1** |
 
-**30 examples. 29/29 re-verified compiling on Compact 0.31.1 (2026-08-17); 11/11 test suites re-run 2026-08-30 — **1551 tests passing** (69 standalone on compact-runtime 0.16.0 + 1482 in `compact-contracts`). Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod.**
+**30 examples. 29/29 compile on Compact 0.31.1 and on 0.34.0 (re-verified 2026-09-23). The 10 standalone suites pass on 0.31.1 + compact-runtime 0.16.0 (2026-09-23, Node 22). On 0.34.0 + 0.19.0 all 10 fail at `createCircuitContext`, whose signature changed (see SKILL.md). 11/11 test suites re-run 2026-08-30 — **1551 tests passing** (69 standalone on compact-runtime 0.16.0 + 1482 in `compact-contracts`). Native Shielded Token added 2026-08-17, compiles on 0.31.1 (no test suite yet). 6 contracts deployed on v8 preprod; `example-bboard` deployed and called on preprod on the ledger-8.1.0 stack, 2026-09-23 (below).**
 
 Token Swap and Token Minting use Zswap coin operations (`receiveShielded`, `sendImmediateShielded`, `mintToken`) that require the full network stack for circuit calls. Both compile and deploy successfully.
 
 ## Preprod Deployment
+
+### 2026-09-23 re-validation (ledger 8.1.0 stack)
+
+The maintained `example-bboard` was deployed and called from a fresh wallet on preprod, using the
+stack in `reference/offchain.md` §7: `wallet-sdk` 1.2.0 (facade 4.1.0), Midnight.js 4.1.1,
+`ledger-v8` 8.1.0, compiler 0.31.1 with `compact-runtime` 0.16.0, proof server 8.1.0, Node 24.
+
+| Step | Result |
+|---|---|
+| Fresh-wallet sync (~1.55M ledger events) | 79.7 min, heap flat at ~150 MB |
+| DUST registration | block 2677448; 268.7 DUST available at once (backdated generation, gotcha #75) |
+| Deploy (2 circuits) | 21 s, block 2677456, `SucceedEntirely` |
+| `post` call | 24 s, block 2677460, `SucceedEntirely` |
+| Read back via the public indexer | `state=occupied`, `sequence=1`, message as posted |
+
+Contract `02a2550d0260571f3b7aeea331feb531da32e688af7f4512a7b539bca02f646c`, checkable with the
+indexer's `contractAction(address)` query. DUST fees were not measured: the indexer's `fee` field
+reads `"1"` for every transaction, and the wallet reports 0 available DUST while change is pending.
+The archived `example-counter`'s wallet stack could not complete the same sync (gotcha #80).
 
 ### v8 (Ledger 8.0.3, March 2026)
 
@@ -265,10 +300,11 @@ Re-compiling every example against Compact 0.31.1 surfaced these:
   `Token__mint(...)`, not `Token_._mint(...)`.
 - **`compact --version` reports the CLI, not the compiler** — CLI 0.5.1 ships compiler 0.31.1.
   Easy to misread when checking which version you are on.
-- **Simulator API stable across `compact-runtime` 0.14 → 0.19** — test suites pinned at `^0.14.0`
+- **Simulator API stable across `compact-runtime` 0.14 → 0.16, changed in 0.19** — test suites pinned at `^0.14.0`
   pass unchanged against 0.16.0. The ceiling is per-compiler, not absolute: 0.16.0 is right for
   compiler 0.31.1 (verified 2026-08-30) and 0.19.0 is right for compiler 0.34.0 (verified
-  2026-08-31). Derive it with `compact compile -- --runtime-version` rather than pinning a
+  2026-08-31). In 0.19 `createCircuitContext` takes a circuit id first, and 0.34 targets ledger 9, which is not
+  yet on mainnet (SKILL.md). Derive the runtime with `compact compile +<version> --runtime-version` rather than pinning a
   constant.
 
 ## Sources

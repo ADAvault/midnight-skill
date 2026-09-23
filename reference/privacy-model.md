@@ -471,6 +471,7 @@ independent identity per contract.
 | The proof is valid for circuit X | Which wallet created the proof |
 | Public ledger state changed | The private inputs that caused the change |
 | Shielded coins moved (Zswap) | Sender, receiver, and amount |
+| Every unshielded NIGHT UTXO an address holds, and whether it is registered for DUST generation (keyless, via the indexer — gotcha #60) | Shielded coin and DUST balances |
 
 **Exception:** If the circuit itself stores `ownPublicKey()` or a wallet identifier in
 public state, the caller is de-anonymized for that transaction.

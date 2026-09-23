@@ -72,21 +72,20 @@ import {
   NodeZkConfigProvider,
 } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
 
+// midnight-js 4.1.1, as example-bboard wires it. walletAndMidnightProvider: §4 "Creating the Combined Provider".
+const zkConfigProvider = new NodeZkConfigProvider<'increment' | 'decrement'>(config.zkConfigPath);
+
 const providers = {
-  // Encryption required since midnight-js 3.0.0 — provide walletProvider OR privateStoragePasswordProvider (gotcha #78)
-  privateStateProvider: levelPrivateStateProvider<PrivateStates>({
+  // accountId and a password provider are REQUIRED (the store is encrypted and account-scoped; gotcha #78)
+  privateStateProvider: levelPrivateStateProvider<PrivateStateId, PrivateState>({
     privateStateStoreName: config.privateStateStoreName,
-    walletProvider: walletAndMidnightProvider, // recommended
-    // OR: privateStoragePasswordProvider: () => 'min-16-char-password',
+    signingKeyStoreName: `${config.privateStateStoreName}-signing-keys`,
+    accountId: String(walletAndMidnightProvider.getCoinPublicKey()), // hashed before use; never the seed
+    privateStoragePasswordProvider: () => getSecretPassword(),       // from a secret store, not a literal
   }),
-  publicDataProvider: indexerPublicDataProvider(
-    config.indexerUrl,
-    config.indexerWsUrl,
-  ),
-  zkConfigProvider: new NodeZkConfigProvider<'increment' | 'decrement'>(
-    config.zkConfigPath,
-  ),
-  proofProvider: httpClientProofProvider(config.proofServerUrl),
+  publicDataProvider: indexerPublicDataProvider(config.indexerUrl, config.indexerWsUrl),
+  zkConfigProvider,
+  proofProvider: httpClientProofProvider(config.proofServerUrl, zkConfigProvider), // 2 args in 4.x
   walletProvider: walletAndMidnightProvider,
   midnightProvider: walletAndMidnightProvider,
 };
@@ -103,8 +102,10 @@ provider persists it between sessions. Two implementations exist:
 // LevelDB (Node.js / Electron -- persistent storage)
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 
-const psp = levelPrivateStateProvider<PrivateStates>({
+const psp = levelPrivateStateProvider<PrivateStateId, PrivateState>({
   privateStateStoreName: 'my-app-private-state',
+  accountId,                                   // required
+  privateStoragePasswordProvider: () => pass,  // required
 });
 
 // In-memory (browser / testing -- no persistence)
@@ -112,8 +113,11 @@ const psp = levelPrivateStateProvider<PrivateStates>({
 const inMemoryStates = new Map<string, PrivateState>();
 ```
 
-As of SDK 3.x, `levelPrivateStateProvider` requires encryption configuration. If you hit
-errors about missing encryption, check the release notes for the exact API.
+In midnight-js 4.1.1 `levelPrivateStateProvider` throws `accountId is required` without an
+`accountId`, and stores are encrypted with a key derived (PBKDF2) from
+`privateStoragePasswordProvider`. The provider hashes the `accountId` (SHA-256, first 32 chars)
+into the store names, which scopes state per account. `walletProvider` is no longer an option.
+Stores created before account scoping migrate with `migrateToAccountScoped({ accountId, ... })`.
 
 **publicDataProvider** -- Reads on-chain state via the indexer's GraphQL API.
 
@@ -168,17 +172,16 @@ const pp = httpClientProofProvider('http://127.0.0.1:6300');
 
 **midnightProvider** -- Submits signed transactions to the Midnight node.
 
-These two are typically the same object, created by the wallet SDK:
+These two are typically the same object, built on the wallet SDK (§4 has the full current bridge):
 
 ```typescript
 const walletAndMidnightProvider = {
-  coinPublicKey: wallet.coinPublicKey,
-  balanceTx(tx: UnbalancedTransaction, newCoins: CoinInfo[]): Promise<BalancedTransaction> {
-    return wallet.balanceTransaction(tx, newCoins);
-  },
-  submitTx(tx: ProvableTransaction): Promise<TransactionId> {
-    return wallet.submitTransaction(tx);
-  },
+  getCoinPublicKey: () => shieldedSecretKeys.coinPublicKey,
+  getEncryptionPublicKey: () => shieldedSecretKeys.encryptionPublicKey,
+  balanceTx: async (tx, ttl) => wallet.finalizeRecipe(await wallet.signRecipe(
+    await wallet.balanceUnboundTransaction(tx, { shieldedSecretKeys, dustSecretKey }, { ttl }),
+    (payload) => keystore.signData(payload))),
+  submitTx: (tx) => wallet.submitTransaction(tx),
 };
 ```
 
@@ -304,207 +307,145 @@ using `assert(disclose(price < maxPrice), "Price out of range")`).
 
 ## 4. Wallet SDK Integration
 
-The Midnight wallet SDK is modular. Each package handles a specific concern:
+Written against the stack `example-bboard` locks (verified on preprod 2026-09-23):
+`@midnight-ntwrk/wallet-sdk` 1.2.0 = facade 4.1.0 · shielded 3.0.2 · dust-wallet 4.2.0 ·
+unshielded-wallet 3.1.0 · hd 3.0.3, with `ledger-v8` 8.1.0 and Midnight.js 4.1.1. **Do not build on
+facade 3.0.0** (the archived `example-counter`): it cannot sync a fresh wallet on preprod
+(gotcha #80).
 
 | Package | Purpose |
 |---------|---------|
-| `@midnight-ntwrk/wallet-sdk-facade` | Orchestrates all wallet components |
-| `@midnight-ntwrk/wallet-sdk-hd` | HD key derivation (BIP32-based) |
-| `@midnight-ntwrk/wallet-sdk-shielded` | Shielded (private) coin operations |
-| `@midnight-ntwrk/wallet-sdk-unshielded-wallet` | Unshielded (transparent) coin operations |
-| `@midnight-ntwrk/wallet-sdk-dust-wallet` | Fee payment operations |
+| `@midnight-ntwrk/wallet-sdk` | Barrel: re-exports the packages below at matched versions |
+| `@midnight-ntwrk/wallet-sdk-facade` | Orchestrates the three sub-wallets; balancing, signing, submission |
+| `@midnight-ntwrk/wallet-sdk-hd` | HD key derivation (roles: Zswap, NightExternal, Dust) |
+| `@midnight-ntwrk/wallet-sdk-shielded` | Shielded (private) coins |
+| `@midnight-ntwrk/wallet-sdk-unshielded-wallet` | Unshielded NIGHT UTXOs, keystore |
+| `@midnight-ntwrk/wallet-sdk-dust-wallet` | DUST: fee payment and generation |
 | `@midnight-ntwrk/wallet-sdk-address-format` | Bech32m address encoding/decoding |
+| `@midnight-ntwrk/testkit-js` | `FluentWalletBuilder` — what the official example uses to build a wallet from a seed |
 
 ### Building a Wallet
 
-`WalletBuilder` has been removed. Construct three sub-wallets and pass them to `WalletFacade`:
+The `WalletFacade` constructor is **private** (on 3.0.0 and 4.1.0 alike). Build through
+`FluentWalletBuilder` (below, as `example-bboard` does) or the static
+`WalletFacade.init({ configuration, shielded, unshielded, dust })`.
 
 ```typescript
-import { WalletFacade } from '@midnight-ntwrk/wallet-sdk-facade';
-import { ShieldedWallet } from '@midnight-ntwrk/wallet-sdk-shielded';
-import { DustWallet } from '@midnight-ntwrk/wallet-sdk-dust-wallet';
-import { createKeystore, InMemoryTransactionHistoryStorage, PublicKey, UnshieldedWallet } from '@midnight-ntwrk/wallet-sdk-unshielded-wallet';
-import { HDWallet, Roles } from '@midnight-ntwrk/wallet-sdk-hd';
-import { getNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import * as ledger from '@midnight-ntwrk/ledger-v7';
-import { Buffer } from 'buffer';
+import { FluentWalletBuilder, type EnvironmentConfiguration } from '@midnight-ntwrk/testkit-js';
+import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { DustSecretKey, LedgerParameters, ZswapSecretKeys } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 
-// 1. Derive HD keys from seed
-const hd = HDWallet.fromSeed(Buffer.from(seed, 'hex'));
-if (hd.type !== 'seedOk') throw new Error('Bad seed');
-const dr = hd.hdWallet.selectAccount(0)
-  .selectRoles([Roles.Zswap, Roles.NightExternal, Roles.Dust])
-  .deriveKeysAt(0);
-if (dr.type !== 'keysDerived') throw new Error('Key derivation failed');
-hd.hdWallet.clear(); // clear sensitive data
+setNetworkId('preprod');
+const env = {
+  walletNetworkId: 'preprod',
+  networkId: 'preprod',
+  indexer: 'https://indexer.preprod.midnight.network/api/v4/graphql',
+  indexerWS: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',
+  node: 'https://rpc.preprod.midnight.network',
+  nodeWS: 'wss://rpc.preprod.midnight.network',
+  faucet: 'https://faucet.preprod.midnight.network/',
+  proofServer: 'http://127.0.0.1:6300',
+} as EnvironmentConfiguration;
 
-const shieldedSecretKeys = ledger.ZswapSecretKeys.fromSeed(dr.keys[Roles.Zswap]);
-const dustSecretKey = ledger.DustSecretKey.fromSeed(dr.keys[Roles.Dust]);
-const unshieldedKeystore = createKeystore(dr.keys[Roles.NightExternal], getNetworkId());
+const { wallet, seeds, keystore } = await FluentWalletBuilder.forEnvironment(env)
+  .withDustOptions({
+    ledgerParams: LedgerParameters.initialParameters(),
+    additionalFeeOverhead: 1_000n,
+    feeBlocksMargin: 5,
+  })
+  .withSeed(seedHex) // hex master seed; same seed → same addresses as the 3.0.0-era derivation
+  .buildWithoutStarting();
 
-// 2. Create three sub-wallets
-const shieldedWallet = ShieldedWallet({
-  networkId: getNetworkId(),
-  indexerClientConnection: { indexerHttpUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
-  provingServerUrl: new URL(cfg.proofServer),
-  relayURL: new URL(cfg.node.replace(/^http/, 'ws')),
-}).startWithSecretKeys(shieldedSecretKeys);
-
-const unshieldedWallet = UnshieldedWallet({
-  networkId: getNetworkId(),
-  indexerClientConnection: { indexerHttpUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
-  txHistoryStorage: new InMemoryTransactionHistoryStorage(),
-}).startWithPublicKey(PublicKey.fromKeyStore(unshieldedKeystore));
-
-const dustWallet = DustWallet({
-  networkId: getNetworkId(),
-  costParameters: { additionalFeeOverhead: 300_000_000_000_000n, feeBlocksMargin: 5 },
-  indexerClientConnection: { indexerHttpUrl: cfg.indexer, indexerWsUrl: cfg.indexerWS },
-  provingServerUrl: new URL(cfg.proofServer),
-  relayURL: new URL(cfg.node.replace(/^http/, 'ws')),
-}).startWithSecretKey(dustSecretKey, ledger.LedgerParameters.initialParameters().dust);
-
-// 3. Create and start the facade
-const wallet = new WalletFacade(shieldedWallet, unshieldedWallet, dustWallet);
+const shieldedSecretKeys = ZswapSecretKeys.fromSeed(seeds.shielded);
+const dustSecretKey = DustSecretKey.fromSeed(seeds.dust);
 await wallet.start(shieldedSecretKeys, dustSecretKey);
 ```
 
-### Waiting for Wallet Sync
+`seeds.masterSeed` is also on the result. Never log it: the official example does (gotcha #81).
 
-After creation, the wallet must sync with the chain to discover existing coins and
-state. This is essential before any transaction:
+### Waiting for Wallet Sync
 
 ```typescript
 import * as Rx from 'rxjs';
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import { unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
 
-// Wait for sync
-const state = await Rx.firstValueFrom(
-  wallet.state().pipe(Rx.filter((s) => s.isSynced)),
-);
-const balance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
-console.log(`Balance: ${balance} tNight`);
-
-// Wait for non-zero balance (e.g., after faucet)
-const waitForFunds = (wallet) =>
-  Rx.firstValueFrom(
-    wallet.state().pipe(
-      Rx.throttleTime(10_000),
-      Rx.filter((s) => s.isSynced),
-      Rx.map((s) => s.unshielded.balances[unshieldedToken().raw] ?? 0n),
-      Rx.filter((balance) => balance > 0n),
-    ),
-  );
+const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
+const night = state.unshielded.balances[unshieldedToken().raw] ?? 0n; // 5,000 tNight = 5000000000
 ```
 
-**CRITICAL:** Use `unshieldedToken().raw` from `@midnight-ntwrk/ledger-v7` for balance lookups (64-char hex). Do NOT use `nativeToken()` from `@midnight-ntwrk/ledger` (68-char tagged hex) — it returns zero balance (gotcha #77).
+`example-bboard` waits for `isStrictlyComplete()` on each sub-wallet's progress instead
+(`state.shielded.state.progress`, `state.dust.state.progress`, `state.unshielded.progress`). A fresh
+sync on preprod is dominated by the Dust event stream, and the wallet cannot report a percentage
+(`highestIndex` stays 0). Gotcha #80 shows how to measure progress against the indexer.
+
+**CRITICAL:** Use `unshieldedToken().raw` for balance lookups (64-char hex), not `nativeToken()`
+(68-char tagged hex), which returns a zero balance (gotcha #77).
 
 ### Dust Registration
 
-NIGHT tokens generate DUST over time, but only after UTxOs are explicitly registered for dust generation. This must happen before any contract deployment or interaction (gotcha #75):
+NIGHT generates DUST only after its UTXOs are registered, and nothing can be deployed or called
+without DUST (gotcha #75). The flow `example-bboard` uses on facade 4.1.0:
 
 ```typescript
-const registerForDustGeneration = async (wallet, unshieldedKeystore) => {
-  const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
-
-  if (state.dust.availableCoins.length > 0 && state.dust.walletBalance(new Date()) > 0n) return;
-
-  const nightUtxos = state.unshielded.availableCoins.filter(
-    (coin) => coin.meta?.registeredForDustGeneration !== true,
+const dustState = await wallet.dust.waitForSyncedState();
+const utxos = state.unshielded.availableCoins.filter((c) => !c.meta.registeredForDustGeneration); // state: synced, above
+if (utxos.length > 0) {
+  const recipe = await wallet.registerNightUtxosForDustGeneration(
+    utxos,
+    keystore.getPublicKey(),
+    (payload) => keystore.signData(payload),
+    dustState.address, // optional: receiver of the generated DUST
   );
-  if (nightUtxos.length > 0) {
-    const recipe = await wallet.registerNightUtxosForDustGeneration(
-      nightUtxos, unshieldedKeystore.getPublicKey(),
-      (payload) => unshieldedKeystore.signData(payload),
-    );
-    const finalized = await wallet.finalizeRecipe(recipe);
-    await wallet.submitTransaction(finalized);
-  }
-
-  // Wait for dust to accrue (may take 1-2 minutes)
-  await Rx.firstValueFrom(wallet.state().pipe(
-    Rx.throttleTime(5_000),
-    Rx.filter((s) => s.isSynced && s.dust.walletBalance(new Date()) > 0n),
-  ));
-};
+  const txId = await wallet.submitTransaction(await wallet.finalizeRecipe(recipe));
+  await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.dust.balance(new Date()) > 0n)));
+}
 ```
+
+Facade 4.1.0 also adds `estimateRegistration(utxos)` and `waitForGeneratedDust(utxos, amount)`,
+which let a registration cover its own fee. 4.1.0 fixed a race where the registration was rejected
+with `BalanceCheckOverspend`.
 
 ### Getting the Wallet Address
 
 ```typescript
-// Unshielded address (mn_addr_<network>1...)
-const address = unshieldedKeystore.getBech32Address();
-
-// Shielded address (mn_shield-addr_<network>1...)
-import { MidnightBech32m, ShieldedAddress, ShieldedCoinPublicKey, ShieldedEncryptionPublicKey } from '@midnight-ntwrk/wallet-sdk-address-format';
-const coinPubKey = ShieldedCoinPublicKey.fromHexString(state.shielded.coinPublicKey.toHexString());
-const encPubKey = ShieldedEncryptionPublicKey.fromHexString(state.shielded.encryptionPublicKey.toHexString());
-const shieldedAddr = MidnightBech32m.encode(getNetworkId(), new ShieldedAddress(coinPubKey, encPubKey)).toString();
-
-// Dust address (mn_dust_<network>1...)
-const dustAddr = state.dust.dustAddress;
+const unshieldedAddress = keystore.getBech32Address();      // mn_addr_<network>1...
+const dustAddress = (await wallet.dust.waitForSyncedState()).address;
 ```
+
+For the shielded address, encode the coin and encryption public keys with
+`@midnight-ntwrk/wallet-sdk-address-format` (`MidnightBech32m.encode(networkId, new ShieldedAddress(coinPk, encPk))`).
 
 ### Creating the Combined Provider
 
-Most dApps need both wallet and midnight provider functionality. The provider bridge
-must implement manual signing to work around a `signRecipe` bug (gotcha #76):
+Midnight.js needs one object that is both `WalletProvider` and `MidnightProvider`. This is the
+`example-bboard` bridge. `signRecipe` works from facade 3.0.0 onwards, so the manual intent-signing
+workaround that facade 1.x needed (gotcha #76) is obsolete:
 
 ```typescript
-import * as ledger from '@midnight-ntwrk/ledger-v7';
-
-// Helper: sign transaction intents with correct proof markers
-const signTransactionIntents = (tx, signFn, proofMarker) => {
-  if (!tx.intents || tx.intents.size === 0) return;
-  for (const segment of tx.intents.keys()) {
-    const intent = tx.intents.get(segment);
-    if (!intent) continue;
-    const cloned = ledger.Intent.deserialize('signature', proofMarker, 'pre-binding', intent.serialize());
-    const sigData = cloned.signatureData(segment);
-    const signature = signFn(sigData);
-    if (cloned.fallibleUnshieldedOffer) {
-      const sigs = cloned.fallibleUnshieldedOffer.inputs.map(
-        (_, i) => cloned.fallibleUnshieldedOffer.signatures.at(i) ?? signature);
-      cloned.fallibleUnshieldedOffer = cloned.fallibleUnshieldedOffer.addSignatures(sigs);
-    }
-    if (cloned.guaranteedUnshieldedOffer) {
-      const sigs = cloned.guaranteedUnshieldedOffer.inputs.map(
-        (_, i) => cloned.guaranteedUnshieldedOffer.signatures.at(i) ?? signature);
-      cloned.guaranteedUnshieldedOffer = cloned.guaranteedUnshieldedOffer.addSignatures(sigs);
-    }
-    tx.intents.set(segment, cloned);
-  }
-};
-
 const walletAndMidnightProvider = {
-  getCoinPublicKey() { return state.shielded.coinPublicKey.toHexString(); },
-  getEncryptionPublicKey() { return state.shielded.encryptionPublicKey.toHexString(); },
-
-  async balanceTx(tx, ttl?) {
-    const recipe = await wallet.balanceUnboundTransaction(tx,
-      { shieldedSecretKeys, dustSecretKey },
-      { ttl: ttl ?? new Date(Date.now() + 30 * 60 * 1000) },
-    );
-    const signFn = (payload) => unshieldedKeystore.signData(payload);
-    signTransactionIntents(recipe.baseTransaction, signFn, 'proof');
-    if (recipe.balancingTransaction) {
-      signTransactionIntents(recipe.balancingTransaction, signFn, 'pre-proof');
-    }
-    return wallet.finalizeRecipe(recipe);
+  getCoinPublicKey: () => shieldedSecretKeys.coinPublicKey,
+  getEncryptionPublicKey: () => shieldedSecretKeys.encryptionPublicKey,
+  async balanceTx(tx, ttl = new Date(Date.now() + 60 * 60 * 1000)) {
+    const recipe = await wallet.balanceUnboundTransaction(tx, { shieldedSecretKeys, dustSecretKey }, { ttl });
+    const signed = await wallet.signRecipe(recipe, (payload) => keystore.signData(payload));
+    return wallet.finalizeRecipe(signed);
   },
-
-  submitTx(tx) { return wallet.submitTransaction(tx); },
+  submitTx: (tx) => wallet.submitTransaction(tx),
 };
 ```
 
-### Removed APIs
+### Removed and renamed APIs
 
 | Old API | Replacement |
 |---------|-------------|
-| `WalletBuilder.buildFromSeed()` | Direct sub-wallet construction (see above) |
+| `WalletBuilder.buildFromSeed()` | `FluentWalletBuilder` (testkit-js) or `WalletFacade.init()` |
+| `new WalletFacade(shielded, unshielded, dust)` (1.0.0) | Private constructor from 3.0.0. Use `FluentWalletBuilder` or `WalletFacade.init()` |
+| `@midnight-ntwrk/ledger-v7` | `@midnight-ntwrk/ledger-v8`, or the `@midnight-ntwrk/midnight-js-protocol/ledger` re-export |
+| `state.dust.walletBalance(t)` | `state.dust.balance(t)` |
+| `state.dust.dustAddress` | `state.dust.address` |
 | `wallet.close()` | `wallet.stop()` |
-| `wallet.serialize()` / `saveState` | Not yet supported in wallet-sdk-facade |
-| `toZswapNetworkId()` | No longer needed — use string network IDs (`"preprod"`, `"preview"`) |
+| `wallet.serialize()` / `saveState` | Shielded and dust sub-wallets expose `serializeState()` / `restore()` in 4.x (not exercised here) |
+| `toZswapNetworkId()` | Not needed — string network IDs (`"preprod"`, `"preview"`) |
 | `state.syncProgress?.synced` | `state.isSynced` |
 | `state.balances[nativeToken()]` | `state.unshielded.balances[unshieldedToken().raw]` |
 
@@ -556,10 +497,11 @@ When you call `deployedContract.callTx.increment()`:
 
 ### Programmatic Token Transfer
 
-For direct tNight transfers. Use manual signing to avoid the `signRecipe` bug (gotcha #76):
+For direct tNight transfers. `signRecipe` is required before finalizing (gotcha #59) and works
+correctly from facade 3.0.0 (the facade 1.x bug, gotcha #76, is fixed):
 
 ```typescript
-import { unshieldedToken } from '@midnight-ntwrk/ledger-v7';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 
 const recipe = await wallet.transferTransaction(
   [{ type: "unshielded", outputs: [{
@@ -570,14 +512,8 @@ const recipe = await wallet.transferTransaction(
   { shieldedSecretKeys, dustSecretKey },
   { ttl: new Date(Date.now() + 30 * 60 * 1000), payFees: true },
 );
-// Manual signing — signRecipe has a known bug (gotcha #76)
-const signFn = (payload) => unshieldedKeystore.signData(payload);
-signTransactionIntents(recipe.baseTransaction, signFn, 'proof');
-if (recipe.balancingTransaction) {
-  signTransactionIntents(recipe.balancingTransaction, signFn, 'pre-proof');
-}
-const finalized = await wallet.finalizeRecipe(recipe);
-const txId = await wallet.submitTransaction(finalized);
+const signed = await wallet.signRecipe(recipe, (payload) => keystore.signData(payload));
+const txId = await wallet.submitTransaction(await wallet.finalizeRecipe(signed));
 ```
 
 Multi-output transfers work — include multiple entries in the `outputs` array (gotcha #62).
@@ -684,18 +620,22 @@ limitation of the current API.
 
 ## 7. Key npm Packages
 
-### Core Packages (v8 compatibility matrix)
+### Core Packages (ledger 8)
+
+The versions `example-bboard` locks (commit `38bfac8`), which deployed on preprod 2026-09-23:
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@midnight-ntwrk/midnight-js-contracts` | 4.0.2 | Contract deployment and interaction |
-| `@midnight-ntwrk/compact-runtime` | 0.15.0 | Circuit execution and simulation |
-| `@midnight-ntwrk/compact-js` | 2.5.0 | CompiledContract, circuit types |
-| `@midnight-ntwrk/midnight-js-types` | 4.0.2 | Core TypeScript type definitions |
-| `@midnight-ntwrk/midnight-js-network-id` | 4.0.2 | Network configuration (string IDs) |
-| `@midnight-ntwrk/ledger-v8` | 8.0.3 | Ledger types, coin types |
+| `@midnight-ntwrk/midnight-js-contracts` | 4.1.1 | Contract deployment and interaction |
+| `@midnight-ntwrk/midnight-js-types` | 4.1.1 | Core TypeScript type definitions |
+| `@midnight-ntwrk/midnight-js-network-id` | 4.1.1 | Network configuration (string IDs) |
+| `@midnight-ntwrk/midnight-js-protocol` | 4.1.1 | Re-exports `ledger` / `compact-runtime` types (`/ledger`, `/compact-runtime`) |
+| `@midnight-ntwrk/compact-runtime` | 0.16.0 | Circuit execution — **must match your compiler** (`compact compile +<ver> --runtime-version`) |
+| `@midnight-ntwrk/compact-js` | 2.5.1 | CompiledContract, circuit types |
+| `@midnight-ntwrk/ledger-v8` | 8.1.0 | Ledger types, coin types |
 
-**Note:** The counter example uses older versions (midnight-js 3.0.0, compact-runtime 0.14.0, ledger-v7) which also work. Import `unshieldedToken` from `@midnight-ntwrk/ledger-v7` regardless of which version set you use.
+Keep every `midnight-js-*` package on one version. Mixing 3.x and 4.x breaks with
+`Cannot read properties of undefined (reading 'ctor')`. `ledger-v7` is no longer supported.
 
 ### Provider Packages
 
@@ -711,18 +651,26 @@ limitation of the current API.
 
 | Package | Version | Purpose |
 |---------|---------|---------|
-| `@midnight-ntwrk/wallet-sdk-facade` | 1.0.0 | Wallet orchestrator |
-| `@midnight-ntwrk/wallet-sdk-hd` | - | HD key derivation |
-| `@midnight-ntwrk/wallet-sdk-shielded` | - | Shielded coin operations |
-| `@midnight-ntwrk/wallet-sdk-unshielded-wallet` | 1.0.0 | Transparent coin operations |
-| `@midnight-ntwrk/wallet-sdk-dust-wallet` | - | Fee payment |
-| `@midnight-ntwrk/wallet-sdk-address-format` | - | Bech32m encoding |
+| `@midnight-ntwrk/wallet-sdk` | 1.2.0 | Barrel pinning the set below |
+| `@midnight-ntwrk/wallet-sdk-facade` | 4.1.0 | Wallet orchestrator (3.0.0 cannot sync preprod — gotcha #80) |
+| `@midnight-ntwrk/wallet-sdk-hd` | 3.0.3 | HD key derivation |
+| `@midnight-ntwrk/wallet-sdk-shielded` | 3.0.2 | Shielded coin operations |
+| `@midnight-ntwrk/wallet-sdk-unshielded-wallet` | 3.1.0 | Transparent coin operations |
+| `@midnight-ntwrk/wallet-sdk-dust-wallet` | 4.2.0 | Fee payment, DUST generation |
+| `@midnight-ntwrk/wallet-sdk-address-format` | 3.1.2 | Bech32m encoding |
+| `@midnight-ntwrk/testkit-js` | 4.1.1 | `FluentWalletBuilder`, test environments |
 
-All packages are published to the Midnight npm registry. Your `.npmrc` must include:
+All of these install from the **public npm registry**. No `.npmrc` registry override is needed.
+(Older guidance pointed `@midnight-ntwrk` at `npm.midnight.network`. That host does not resolve as
+of 2026-09-23.) `example-bboard`'s `.npmrc` sets only `legacy-peer-deps = true`, which it needs
+until `vite-plugin-wasm` supports Vite 7.
 
-```
-@midnight-ntwrk:registry=https://npm.midnight.network/
-```
+⚠ **Pin exact wallet versions. The `latest` tag on the old scope lags.** The wallet SDK is published
+under both `@midnight-ntwrk/` and a new scope, `@midnightntwrk/` (no hyphen). As of 2026-09-23, a
+bare `npm install @midnight-ntwrk/wallet-sdk-facade` resolves to **4.0.1**, the version the
+preprod memory leak was reported on (gotcha #80), and `@midnight-ntwrk/wallet-sdk` resolves to
+1.1.0. On `@midnightntwrk/` the `latest` tags are 4.1.0 and 1.2.0. The 2.0 / 5.0 betas and
+`ledger-v9` release candidates are on both scopes.
 
 ---
 
@@ -782,11 +730,14 @@ The proof server is a standalone process that generates ZK proofs. It needs acce
 the proving parameters (large files, hundreds of MB).
 
 ```bash
-# Official proof server (v8)
-docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.3 midnight-proof-server --port 6300
+# Official proof server for ledger 8. The default command already listens on 6300.
+docker run -d -p 127.0.0.1:6300:6300 midnightntwrk/proof-server:8.1.0
 ```
 
-**Note:** The `--network` flag is no longer accepted. Docker registry moved from `midnightnetwork/` to `midnightntwrk/`. Remote proof servers through Lace are currently unavailable — run locally.
+**Note:** Bind to `127.0.0.1`: the proof server receives your private inputs. Its entrypoint is
+`bash -c`, so flags passed as separate arguments are silently dropped (gotcha #21). The `--network`
+flag is gone. The Docker registry moved from `midnightnetwork/` to `midnightntwrk/`. Remote proof
+servers through Lace are currently unavailable, so run it locally.
 
 Proof generation time depends on circuit complexity (`k` value). A simple counter
 circuit takes 2-5 seconds. Complex circuits with large Maps or many operations can take
@@ -889,21 +840,33 @@ Mixing versions will fail silently or produce invalid proofs.
 
 ### How to Stay Aligned
 
-1. **Start from an official example.** Clone `example-counter` or `example-bboard` and
-   use its exact `package.json` versions.
+1. **Start from an official example.** Clone `example-bboard` (maintained — `example-counter` is
+   archived) or scaffold with `npx create-mn-app`, and use its exact `package.json` versions.
 2. **Check the compatibility matrix.** The official matrix lives at
-   `https://docs.midnight.network/relnotes/comp-matrix` -- but it is often outdated.
-3. **Lock versions.** Use exact versions in `package.json`, not ranges:
+   `https://docs.midnight.network/relnotes/support-matrix`, but it is often outdated.
+3. **Lock versions.** Use exact versions in `package.json`, not ranges. This is the ledger-8 set
+   that deployed on preprod on 2026-09-23 (from `example-bboard`'s lockfile):
 
 ```json
 {
   "dependencies": {
-    "@midnight-ntwrk/midnight-js-contracts": "3.0.0",
-    "@midnight-ntwrk/compact-runtime": "0.14.0",
-    "@midnight-ntwrk/wallet-sdk-facade": "1.0.0"
+    "@midnight-ntwrk/compact-runtime": "0.16.0",
+    "@midnight-ntwrk/ledger-v8": "8.1.0",
+    "@midnight-ntwrk/midnight-js-contracts": "4.1.1",
+    "@midnight-ntwrk/midnight-js-http-client-proof-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-indexer-public-data-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-level-private-state-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-network-id": "4.1.1",
+    "@midnight-ntwrk/midnight-js-node-zk-config-provider": "4.1.1",
+    "@midnight-ntwrk/midnight-js-types": "4.1.1",
+    "@midnight-ntwrk/testkit-js": "4.1.1",
+    "@midnight-ntwrk/wallet-sdk": "1.2.0"
   }
 }
 ```
+
+   `compact-runtime` 0.16.0 is right only for compiler 0.31.x. Derive it from your compiler with
+   `compact compile +<ver> --runtime-version`. The maintained example also requires Node ≥ 24.11.1.
 
 4. **Use Brick Towers' local network.** Their Docker images are tested against specific
    SDK versions. Check their README for the compatible SDK version.
@@ -914,27 +877,19 @@ When versions are unclear, check what the official examples use:
 
 ```bash
 # Clone the latest example and inspect its dependencies
-git clone https://github.com/midnightntwrk/example-counter.git
-cat example-counter/counter-cli/package.json | grep midnight
+git clone https://github.com/midnightntwrk/example-bboard.git
+cat example-bboard/package.json | grep midnight
 ```
 
 ---
 
 ## 11. Common Issues
 
-### signRecipe Bug (wallet-sdk-unshielded-wallet 1.0.0)
+### signRecipe Bug (wallet-sdk 1.x only — fixed)
 
-The `signRecipe` method in wallet-sdk-unshielded-wallet 1.0.0 has a known bug that
-requires manual intent signing. Workaround:
-
-```typescript
-// If wallet.balanceTransaction fails with a signing error,
-// you may need to manually sign the intent:
-const balanced = await wallet.balanceTransaction(unbalancedTx, newCoins);
-// If this throws, check if you need to downgrade or upgrade the wallet SDK
-```
-
-Monitor the Midnight Discord `#sdk-support` channel for patches.
+`signRecipe` in the 1.x wallet SDK hard-coded the wrong proof marker ("Failed to clone intent",
+gotcha #76). Fixed in facade 3.0.0, and `example-bboard` uses `signRecipe` on 4.1.0. If you still
+see the error, you are on a 1.x wallet SDK: upgrade rather than hand-sign intents.
 
 ### nativeToken() vs unshieldedToken().raw Length Mismatch
 
@@ -942,25 +897,22 @@ Monitor the Midnight Discord `#sdk-support` channel for patches.
 64 characters. These are NOT interchangeable:
 
 ```typescript
-import { nativeToken } from '@midnight-ntwrk/ledger-v7';
+import { unshieldedToken } from '@midnight-ntwrk/ledger-v8';
 
-// Correct: use nativeToken() for balance lookups
-const balance = balances[nativeToken()];
+// Correct: wallet balances are keyed by the 64-char raw token type
+const balance = state.unshielded.balances[unshieldedToken().raw] ?? 0n;
 
-// Wrong: comparing nativeToken() output with unshieldedToken().raw
-// They have different lengths and will never match
+// Wrong: nativeToken() is the 68-char tagged form, so this lookup always returns undefined (gotcha #77)
 ```
+
+Verified 2026-09-23: a funded preprod wallet reported `5000000000` under `unshieldedToken().raw`, and
+the indexer reports unshielded NIGHT's token type as 64 hex zeros.
 
 ### levelPrivateStateProvider Encryption Requirement
 
-Recent SDK versions require encryption configuration for `levelPrivateStateProvider`.
-If you see errors about missing encryption:
-
-```typescript
-// Check the SDK release notes for the exact encryption API.
-// The error message will reference the required configuration.
-// Workaround for development: use an in-memory provider instead.
-```
+midnight-js 4.1.1 requires `accountId` and `privateStoragePasswordProvider` (at least 16
+characters, 3 character classes, no run of more than 3 identical characters). Errors:
+`accountId is required`, `Password is shorter than 16 characters`. Gotcha #78 has the details.
 
 ### DApp Connector Transfer Limitation
 
@@ -1021,7 +973,7 @@ essential for observability in production and debugging on testnet.
 ### Querying Contract State
 
 ```typescript
-const INDEXER = "https://indexer.preprod.midnight.network/api/v3/graphql";
+const INDEXER = "https://indexer.preprod.midnight.network/api/v4/graphql"; // v3 is still served (2026-09-23)
 
 async function getContractState(address: string, blockHeight: number) {
   const resp = await fetch(INDEXER, {
@@ -1209,112 +1161,100 @@ if (!await checkProofServer("http://127.0.0.1:6300")) {
 
 ---
 
-## Full Working Example: Counter dApp (Node.js CLI)
+## Full Working Example: deploy and call on preprod (Node.js CLI)
 
-Putting it all together -- a complete Node.js CLI application that deploys and interacts
-with a counter contract:
+The flow that deployed `example-bboard`'s contract on preprod on 2026-09-23 (Node 24, compiler
+0.31.1, the lockfile versions in §7). Run it inside `example-bboard`'s workspace, which provides
+`contract/src/managed/bboard` and the compiled-contract object. It needs a funded seed and the
+local proof server. The run went through bboard's `MidnightWalletProvider` and `BBoardAPI` helpers;
+this inlines the same calls, but the inlined form has not itself been run verbatim.
 
 ```typescript
-import * as path from 'path';
 import * as Rx from 'rxjs';
+import { WebSocket } from 'ws';
 import { deployContract } from '@midnight-ntwrk/midnight-js-contracts';
 import { levelPrivateStateProvider } from '@midnight-ntwrk/midnight-js-level-private-state-provider';
 import { indexerPublicDataProvider } from '@midnight-ntwrk/midnight-js-indexer-public-data-provider';
 import { httpClientProofProvider } from '@midnight-ntwrk/midnight-js-http-client-proof-provider';
 import { NodeZkConfigProvider } from '@midnight-ntwrk/midnight-js-node-zk-config-provider';
-import { WalletBuilder } from '@midnight-ntwrk/wallet-sdk-facade';
-import { NetworkId } from '@midnight-ntwrk/midnight-js-network-id';
-import { nativeToken } from '@midnight-ntwrk/ledger-v7';
-import { Contract as CounterContract } from '../managed/counter/contract/index.cjs';
+import { setNetworkId } from '@midnight-ntwrk/midnight-js-network-id';
+import { DustSecretKey, LedgerParameters, ZswapSecretKeys, unshieldedToken } from '@midnight-ntwrk/midnight-js-protocol/ledger';
+import { FluentWalletBuilder, type EnvironmentConfiguration } from '@midnight-ntwrk/testkit-js';
+// contract/src/index.ts: CompiledContract.make(...).pipe(withWitnesses(witnesses), withCompiledFileAssets('./managed/bboard'))
+import { CompiledBBoardContractContract, createBBoardPrivateState, ledger } from './contract/src/index';
 
-// Configuration for local standalone network
-const config = {
-  indexer: 'http://127.0.0.1:8088/api/v3/graphql',
-  indexerWs: 'ws://127.0.0.1:8088/api/v3/graphql',
-  node: 'ws://127.0.0.1:9944',
-  proofServer: 'http://127.0.0.1:6300',
-  zkConfigPath: path.resolve(__dirname, '../managed/counter'),
-};
+// @ts-expect-error the indexer client (apollo) needs a global WebSocket in Node
+globalThis.WebSocket = WebSocket;
 
-// Private state type
-interface CounterPrivateState {
-  readonly secretKey: Uint8Array;
+setNetworkId('preprod');
+const env = {
+  walletNetworkId: 'preprod', networkId: 'preprod',
+  indexer: 'https://indexer.preprod.midnight.network/api/v4/graphql',
+  indexerWS: 'wss://indexer.preprod.midnight.network/api/v4/graphql/ws',
+  node: 'https://rpc.preprod.midnight.network', nodeWS: 'wss://rpc.preprod.midnight.network',
+  faucet: 'https://faucet.preprod.midnight.network/', proofServer: 'http://127.0.0.1:6300',
+} as EnvironmentConfiguration;
+
+// 1. Wallet from a funded hex seed (read it from a secret store; never log it — gotcha #81)
+const { wallet, seeds, keystore } = await FluentWalletBuilder.forEnvironment(env)
+  .withDustOptions({ ledgerParams: LedgerParameters.initialParameters(), additionalFeeOverhead: 1_000n, feeBlocksMargin: 5 })
+  .withSeed(process.env.MIDNIGHT_SEED!)
+  .buildWithoutStarting();
+const shieldedSecretKeys = ZswapSecretKeys.fromSeed(seeds.shielded);
+const dustSecretKey = DustSecretKey.fromSeed(seeds.dust);
+await wallet.start(shieldedSecretKeys, dustSecretKey);
+
+// 2. Sync (a fresh wallet on preprod took ~80 min on 2026-09-23 — gotcha #80) and check funds
+const state = await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.isSynced)));
+if ((state.unshielded.balances[unshieldedToken().raw] ?? 0n) === 0n) throw new Error('fund the wallet first');
+
+// 3. Register NIGHT for DUST generation, then wait for DUST (gotcha #75)
+const utxos = state.unshielded.availableCoins.filter((c) => !c.meta.registeredForDustGeneration);
+if (utxos.length > 0) {
+  const dustState = await wallet.dust.waitForSyncedState();
+  const recipe = await wallet.registerNightUtxosForDustGeneration(
+    utxos, keystore.getPublicKey(), (p) => keystore.signData(p), dustState.address);
+  await wallet.submitTransaction(await wallet.finalizeRecipe(recipe));
+  await Rx.firstValueFrom(wallet.state().pipe(Rx.filter((s) => s.dust.balance(new Date()) > 0n)));
 }
 
-// Witnesses
-const witnesses = {
-  localSecretKey: ({
-    privateState,
-  }: { privateState: CounterPrivateState }): [CounterPrivateState, Uint8Array] => {
-    return [privateState, privateState.secretKey];
-  },
+// 4. Providers
+const walletAndMidnightProvider = {
+  getCoinPublicKey: () => shieldedSecretKeys.coinPublicKey,
+  getEncryptionPublicKey: () => shieldedSecretKeys.encryptionPublicKey,
+  balanceTx: async (tx, ttl = new Date(Date.now() + 3_600_000)) =>
+    wallet.finalizeRecipe(await wallet.signRecipe(
+      await wallet.balanceUnboundTransaction(tx, { shieldedSecretKeys, dustSecretKey }, { ttl }),
+      (p) => keystore.signData(p))),
+  submitTx: (tx) => wallet.submitTransaction(tx),
+};
+const zkConfigProvider = new NodeZkConfigProvider<'post' | 'takeDown'>('./contract/src/managed/bboard');
+const providers = {
+  privateStateProvider: levelPrivateStateProvider({
+    privateStateStoreName: 'bboard-private-state',
+    signingKeyStoreName: 'bboard-private-state-signing-keys',
+    accountId: String(shieldedSecretKeys.coinPublicKey),
+    privateStoragePasswordProvider: () => process.env.PRIVATE_STATE_PASSWORD!, // ≥16 chars, 3 classes
+  }),
+  publicDataProvider: indexerPublicDataProvider(env.indexer, env.indexerWS),
+  zkConfigProvider,
+  proofProvider: httpClientProofProvider(env.proofServer, zkConfigProvider),
+  walletProvider: walletAndMidnightProvider,
+  midnightProvider: walletAndMidnightProvider,
 };
 
-async function main() {
-  // 1. Build wallet from seed
-  const seed = process.env.MIDNIGHT_SEED!;
-  console.log('Building wallet...');
-  const wallet = await WalletBuilder.buildFromSeed(
-    seed,
-    NetworkId.Undeployed,
-    config.indexer,
-    config.indexerWs,
-    config.proofServer,
-    config.node,
-  );
+// 5. Deploy, call, read back
+const deployed = await deployContract(providers, {
+  compiledContract: CompiledBBoardContractContract,
+  privateStateId: 'bboardPrivateState',
+  initialPrivateState: createBBoardPrivateState(crypto.getRandomValues(new Uint8Array(32))),
+});
+const address = deployed.deployTxData.public.contractAddress;
+const posted = await deployed.callTx.post('hello, preprod');
+console.log(`deployed ${address}; post tx ${posted.public.txId} in block ${posted.public.blockHeight}`);
 
-  // 2. Wait for wallet sync
-  console.log('Waiting for wallet sync...');
-  await Rx.firstValueFrom(
-    wallet.state().pipe(
-      Rx.filter((s) => s.syncProgress?.synced === true),
-      Rx.filter((s) => s.balances != null && s.balances[nativeToken()] > 0n),
-    ),
-  );
-  console.log('Wallet synced.');
-
-  // 3. Build providers
-  const walletAndMidnightProvider = {
-    coinPublicKey: wallet.coinPublicKey,
-    balanceTx: (tx: any, coins: any) => wallet.balanceTransaction(tx, coins),
-    submitTx: (tx: any) => wallet.submitTransaction(tx),
-  };
-
-  const providers = {
-    privateStateProvider: levelPrivateStateProvider<{ counterPrivateState: CounterPrivateState }>({
-      privateStateStoreName: 'counter-private-state',
-    }),
-    publicDataProvider: indexerPublicDataProvider(config.indexer, config.indexerWs),
-    zkConfigProvider: new NodeZkConfigProvider<'increment' | 'decrement'>(config.zkConfigPath),
-    proofProvider: httpClientProofProvider(config.proofServer),
-    walletProvider: walletAndMidnightProvider,
-    midnightProvider: walletAndMidnightProvider,
-  };
-
-  // 4. Deploy contract
-  console.log('Deploying counter contract...');
-  const deployed = await deployContract(providers, {
-    contract: CounterContract,
-    initialPrivateState: {
-      secretKey: new Uint8Array(32),
-    },
-    witnesses,
-  });
-  console.log(`Deployed at: ${deployed.deployTxData.contractAddress}`);
-
-  // 5. Call increment circuit
-  console.log('Calling increment...');
-  const result = await deployed.callTx.increment();
-  console.log(`Transaction: ${result.txId}`);
-
-  // 6. Read current state
-  const state = deployed.state;
-  console.log(`Counter value: ${state.counter}`);
-}
-
-main().catch(console.error);
+const onChain = await providers.publicDataProvider.queryContractState(address);
+const board = ledger(onChain!.data);
+console.log(board.message.is_some ? board.message.value : '(empty)', board.sequence);
+await wallet.stop();
 ```
-
-This example assumes a running local network (node + indexer + proof server) and a
-funded wallet seed in the `MIDNIGHT_SEED` environment variable. See section 8 for
-local network setup.

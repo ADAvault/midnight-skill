@@ -36,17 +36,22 @@ move toward real network conditions.
 **Prerequisites (must complete before any contract deployment):**
 
 1. **Fund wallet** — Request tNight from the faucet:
-   preprod <https://midnight-tmnight-preprod.nethermind.dev/> ·
-   preview <https://midnight-tmnight-preview.nethermind.dev/>
-   (the older `faucet.*.midnight.network` URLs were superseded in June 2026).
-   Check `/api/health` on either before a session — testnets go out of service regularly.
-2. **Register for dust** — Call `wallet.registerNightUtxosForDustGeneration()` to register NIGHT UTxOs. Without this, all deployments fail with "could not balance dust" (gotcha #75).
-3. **Wait for dust** — DUST accrues over time. Wait until `state.dust.walletBalance(new Date()) > 0n` before deploying.
-4. **Run local proof server** — Remote proof servers through Lace are currently unavailable. Run locally:
+   preprod <https://faucet.preprod.midnight.network/> ·
+   preview <https://faucet.preview.midnight.network/> (official; Nethermind-hosted alternatives
+   such as `https://midnight-tmnight-preprod.nethermind.dev/` also work). The official preprod
+   faucet delivered 5,000 tNight on 2026-09-23. Check `/api/health` on a Nethermind faucet before
+   a session: testnets go out of service regularly.
+2. **Sync the wallet on a current wallet stack** — facade 4.1.0 (`example-bboard`), not the
+   archived `example-counter`'s 3.0.0, which cannot sync a fresh wallet on preprod (gotcha #80).
+3. **Register for dust** — Call `wallet.registerNightUtxosForDustGeneration()` to register NIGHT UTxOs. Without this, all deployments fail with "could not balance dust" (gotcha #75).
+4. **Wait for dust** — DUST accrues over time. Wait until `state.dust.balance(new Date()) > 0n` before deploying.
+5. **Run local proof server** — Remote proof servers through Lace are currently unavailable. Run locally, bound to loopback:
    ```bash
-   docker run -d -p 6300:6300 midnightntwrk/proof-server:8.0.3 midnight-proof-server --port 6300
+   docker run -d -p 127.0.0.1:6300:6300 midnightntwrk/proof-server:8.1.0
    ```
-   Note: Docker registry moved from `midnightnetwork/` to `midnightntwrk/`. The `--network` flag is no longer accepted — use `-v` for verbose mode only.
+   The default command already listens on 6300. To pass flags, give the whole command as one
+   string (`'midnight-proof-server -v'`). Flags passed as separate arguments are silently dropped
+   (gotcha #21).
 
 ---
 
